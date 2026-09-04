@@ -1,4 +1,5 @@
 import { allFields, getForm } from "../shared/forms";
+import { buildAiCapturePrompt, normalizeAiCaptureResponse } from "./domain/aiCapture";
 import { APP_SCHEMA_VERSION, PROTOCOL_VERSION, nextCalendarDate } from "../shared/safetyContract";
 import type { CanonicalRecord, OperatorRecord, Values } from "../shared/types";
 import { backupStatus, previousTorontoDate } from "./domain/backup";
@@ -102,21 +103,14 @@ async function aiExtract(request: Request, env: Env) {
   if (!env.GEMINI_API_KEY) throw new DomainError("ai_not_configured", "GEMINI_API_KEY is not configured.", 503);
   const body = await readJson(request) as { imageBase64?:string; mimeType?:string };
   if (!body.imageBase64 || body.imageBase64.length > 9_000_000) throw new DomainError("image_invalid", "A compressed image under approximately 6 MB is required.");
-  const form = getForm("gas-turbine-log-sheet")!;
-  const fields = allFields(form).filter((f)=>f.aiExtract).map((f)=>({ key:f.key,label:f.label,unit:f.unit ?? null }));
-  const prompt = `Read only values visibly shown in this ECC gas turbine control-screen photo. Return JSON only, no markdown, using this shape: {"values":{"field_key":number|null},"needsCheck":["field_key"]}. Never infer, normalize, correct, or fabricate a value. If uncertain or absent, return null and include the key in needsCheck. Fields: ${JSON.stringify(fields)}`;
+  const prompt = buildAiCapturePrompt();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.GEMINI_MODEL || "gemini-2.5-flash")}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
   const response = await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt},{inlineData:{mimeType:body.mimeType ?? "image/jpeg",data:body.imageBase64}}]}],generationConfig:{responseMimeType:"application/json",temperature:0}})});
   const raw:any = await response.json().catch(()=>null);
   if (!response.ok) throw new DomainError("ai_error", `Gemini returned HTTP ${response.status}.`, 502, raw);
   const text = raw?.candidates?.[0]?.content?.parts?.map((p:any)=>p.text ?? "").join("") ?? "{}";
   let parsed:any; try { parsed=JSON.parse(text); } catch { throw new DomainError("ai_parse", "Gemini did not return valid JSON.", 502); }
-  const allowed = new Set(fields.map((f)=>f.key));
-  const values:Record<string,number|null>={}; const needsCheck = new Set<string>(Array.isArray(parsed.needsCheck)?parsed.needsCheck:[]);
-  for (const field of fields) {
-    const v=parsed.values?.[field.key]; values[field.key]=typeof v==="number"&&Number.isFinite(v)?v:null; if(values[field.key]===null) needsCheck.add(field.key);
-  }
-  return { values, needsCheck:[...needsCheck].filter((k)=>allowed.has(k)) };
+  return normalizeAiCaptureResponse(parsed);
 }
 
 async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
