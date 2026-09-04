@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "contractVersion": "ecc-backup-v2",
+  "deliveryId": "<trigger deliveryId>",
+  "generationId": "<trigger generationId>",
+  "generationNumber": 1,
+  "backupDate": "YYYY-MM-DD",
+  "payloadHash": "<trigger payloadHash>",
+  "jsonFileName": "<trigger jsonFileName>",
+  "xlsxFileName": "<trigger xlsxFileName>",
+  "receiptFileName": "<trigger receiptFileName>"
+}

@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "deliveryId": { "type": "string" },
+    "generationId": { "type": "string" },
+    "generationNumber": { "type": "integer" },
+    "backupDate": { "type": "string" },
+    "payloadHash": { "type": "string" },
+    "jsonFileName": { "type": "string" },
+    "xlsxFileName": { "type": "string" },
+    "receiptFileName": { "type": "string" },
+    "canonicalJson": { "type": "string" }
+  },
+  "required": [
+    "contractVersion", "deliveryId", "generationId", "generationNumber",
+    "backupDate", "payloadHash", "jsonFileName", "xlsxFileName",
+    "receiptFileName", "canonicalJson"
+  ]
+}

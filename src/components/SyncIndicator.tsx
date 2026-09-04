@@ -1,0 +1,4 @@
+import { Cloud, CloudOff, RefreshCw, TriangleAlert } from "lucide-react";
+import { useSyncExternalStore } from "react";
+import { getSyncSnapshot, subscribeSync } from "../lib/sync";
+export function SyncIndicator(){const state=useSyncExternalStore(subscribeSync,getSyncSnapshot,getSyncSnapshot);if(!state.online)return <div className="sync-pill offline"><CloudOff size={16}/> Offline · {state.pending} pending</div>;if(state.compatibility==="update_required")return <div className="sync-pill offline"><TriangleAlert size={16}/> Update required</div>;if(state.running)return <div className="sync-pill"><RefreshCw className="spin" size={16}/> Syncing · {state.pending}</div>;if(state.lastError)return <div className="sync-pill offline" title={state.lastError}><TriangleAlert size={16}/> Upload alert</div>;return <div className="sync-pill"><Cloud size={16}/> {state.pending?`${state.pending} pending`:"Server confirmed"}</div>;}

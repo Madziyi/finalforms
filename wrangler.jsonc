@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ecc-operator-pwa-v1",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-03",
+  "observability": { "enabled": true },
+  "vars": {
+    "APP_PROTOCOL_VERSION": "2",
+    "APP_SCHEMA_VERSION": "2",
+    "PLANT_TIME_ZONE": "America/Toronto",
+    "GEMINI_MODEL": "gemini-2.5-flash"
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "triggers": {
+    "crons": ["45 5 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ecc-operator-v1-production",
+      "database_id": "f1cec137-f4ff-4d74-b224-3b07acc7a262",
+      "migrations_dir": "migrations",
+      "migrations_table": "d1_migrations"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "ecc-backup-v2",
+      "binding": "BACKUP_WORKFLOW",
+      "class_name": "BackupWorkflow"
+    }
+  ]
+}

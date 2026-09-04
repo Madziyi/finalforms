@@ -1,0 +1,44 @@
+{
+  "name": "ecc-operator-pwa-v1",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "check": "tsc -b --pretty false",
+    "test": "vitest run",
+    "db:init:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "db:status:remote": "wrangler d1 migrations list DB --remote",
+    "provision:cloud": "node scripts/provision-cloud.mjs",
+    "verify:cloud": "node scripts/verify-cloud.mjs",
+    "deploy": "npm run build && wrangler deploy",
+    "cf:types": "wrangler types",
+    "db:reset:local": "node scripts/reset-local.mjs",
+    "smoke:local": "node scripts/smoke-local.mjs",
+    "dev:web": "vite",
+    "dev:worker": "wrangler dev --port 8787",
+    "dev:worker:remote": "wrangler dev --remote --port 8787"
+  },
+  "dependencies": {
+    "dexie": "^4.2.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^6.30.1",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260901.1",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.128.0"
+  }
+}
