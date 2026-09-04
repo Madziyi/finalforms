@@ -13,6 +13,7 @@ export function AiCapture({
   onVerified: (values: Record<string, number | null>) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const guideRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -94,16 +95,38 @@ export function AiCapture({
 
   async function capture() {
     const video = videoRef.current;
-    if (!video || !cameraReady || video.videoWidth === 0 || video.videoHeight === 0) {
+    const guide = guideRef.current;
+    if (!video || !guide || !cameraReady || video.videoWidth === 0 || video.videoHeight === 0) {
       setError("Camera preview is not ready yet. Try again or choose a photo.");
       return;
     }
+    const videoBounds = video.getBoundingClientRect();
+    const guideBounds = guide.getBoundingClientRect();
+    const cropLeft = Math.max(0, guideBounds.left - videoBounds.left);
+    const cropTop = Math.max(0, guideBounds.top - videoBounds.top);
+    const cropRight = Math.min(videoBounds.width, guideBounds.right - videoBounds.left);
+    const cropBottom = Math.min(videoBounds.height, guideBounds.bottom - videoBounds.top);
+    if (cropRight <= cropLeft || cropBottom <= cropTop) {
+      setError("The capture guide is not ready yet. Try again.");
+      return;
+    }
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 1920;
-    canvas.height = video.videoHeight || 1080;
+    // `object-fit: cover` may crop the camera stream to fill the preview.
+    // Translate the visible guide back through that crop before drawing it.
+    const displayScale = Math.max(videoBounds.width / video.videoWidth, videoBounds.height / video.videoHeight);
+    const displayWidth = video.videoWidth * displayScale;
+    const displayHeight = video.videoHeight * displayScale;
+    const displayOffsetX = (displayWidth - videoBounds.width) / 2;
+    const displayOffsetY = (displayHeight - videoBounds.height) / 2;
+    const sourceX = Math.round((cropLeft + displayOffsetX) / displayScale);
+    const sourceY = Math.round((cropTop + displayOffsetY) / displayScale);
+    const sourceWidth = Math.round((cropRight - cropLeft) / displayScale);
+    const sourceHeight = Math.round((cropBottom - cropTop) / displayScale);
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
     closeCamera();
     if (blob) await processBlob(blob);
@@ -184,7 +207,13 @@ export function AiCapture({
         <div className="camera-modal">
           <div className="camera-stage">
             <video ref={videoRef} autoPlay playsInline muted />
-            <div className="camera-frame"><span>Place the bottom edge of the summary just above this line</span></div>
+            <div ref={guideRef} className="camera-frame">
+              <div className="camera-guide-copy">
+                <strong>Frame only the three Tag / Description columns</strong>
+                <span>Put the line below the top summary on the yellow edge. Keep the alarm/footer below the frame.</span>
+              </div>
+              <i className="camera-corner top-left" /><i className="camera-corner top-right" /><i className="camera-corner bottom-left" /><i className="camera-corner bottom-right" />
+            </div>
             <button className="camera-close" onClick={closeCamera}><X /></button>
             <button className="capture-button" onClick={capture} disabled={!cameraReady}><Camera size={24} /> {cameraReady ? "Capture" : "Starting camera…"}</button>
           </div>

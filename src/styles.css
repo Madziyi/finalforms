@@ -244,12 +244,17 @@ input:focus, select:focus { border-color: #8788e9; box-shadow: 0 0 0 3px rgba(87
 .ai-diagnostics p { margin: 9px 0; color: var(--muted); font-size: 11px; }
 .ai-diagnostics pre { max-height: 360px; overflow: auto; margin: 0; padding: 10px; border-radius: 8px; background: #151927; color: #dbe4ff; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
 .camera-modal { position: fixed; inset: 0; background: rgba(7,10,18,.92); z-index: 100; display: grid; place-items: center; padding: 20px; }
-.camera-stage { width: min(1200px, 100%); aspect-ratio: 16/10; background: #05070c; position: relative; overflow: hidden; border-radius: 18px; }
+.camera-stage { width: min(1200px, 100%); max-height: calc(100dvh - 40px); aspect-ratio: 4/3; background: #05070c; position: relative; overflow: hidden; border-radius: 18px; }
 .camera-stage video { width: 100%; height: 100%; object-fit: cover; }
-.camera-frame { position: absolute; inset: 8% 7%; border: 3px solid rgba(255,255,255,.92); border-top: 5px solid #ffd34d; border-radius: 14px; box-shadow: 0 0 0 999px rgba(0,0,0,.24); display: grid; place-items: start center; }
-.camera-frame span { margin-top: 10px; padding: 7px 11px; border-radius: 7px; background: rgba(0,0,0,.68); color: #ffe27a; font-weight: 800; font-size: 13px; text-align: center; text-shadow: 0 1px 4px black; }
+.camera-frame { position: absolute; width: min(90%, calc((100% - 32px) * 1)); aspect-ratio: 1.58; left: 50%; top: 49%; transform: translate(-50%, -50%); border: 3px solid rgba(255,255,255,.94); border-top: 5px solid #ffd34d; border-radius: 10px; box-shadow: 0 0 0 999px rgba(0,0,0,.48); pointer-events: none; }
+.camera-guide-copy { position: absolute; left: 50%; top: 9px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 22px); display: grid; gap: 3px; padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,.76); color: white; text-align: center; text-shadow: 0 1px 4px black; }
+.camera-guide-copy strong { color: #ffe27a; font-size: 13px; }
+.camera-guide-copy span { font-size: 11px; font-weight: 650; line-height: 1.25; }
+.camera-corner { position: absolute; width: 26px; height: 26px; border-color: #ffd34d; border-style: solid; border-width: 0; }
+.camera-corner.top-left { left: -4px; top: -6px; border-left-width: 5px; border-top-width: 5px; border-radius: 7px 0 0; }.camera-corner.top-right { right: -4px; top: -6px; border-right-width: 5px; border-top-width: 5px; border-radius: 0 7px 0 0; }.camera-corner.bottom-left { left: -4px; bottom: -4px; border-left-width: 5px; border-bottom-width: 5px; border-radius: 0 0 0 7px; }.camera-corner.bottom-right { right: -4px; bottom: -4px; border-right-width: 5px; border-bottom-width: 5px; border-radius: 0 0 7px; }
 .camera-close { position: absolute; top: 14px; right: 14px; width: 44px; height: 44px; border-radius: 999px; border: 0; background: rgba(0,0,0,.55); color: white; display: grid; place-items: center; }
 .capture-button { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); min-height: 52px; padding: 0 22px; border-radius: 999px; border: 0; background: white; color: #151927; font-weight: 800; display: flex; align-items: center; gap: 9px; }
+@media (max-width: 720px), (max-height: 700px) { .camera-modal { padding: 10px; }.camera-stage { width: 100%; max-height: calc(100dvh - 20px); }.camera-frame { width: 88%; top: 47%; }.camera-guide-copy { top: 5px; padding: 6px 9px; }.camera-guide-copy strong { font-size: 11px; }.camera-guide-copy span { font-size: 9px; }.capture-button { bottom: 10px; min-height: 44px; padding: 0 16px; } }
 
 .data-toolbar { padding: 18px; }
 .data-toolbar.borderless { padding: 0; background: transparent; border: 0; box-shadow: none; margin-bottom: 18px; }
