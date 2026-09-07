@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "mode": "dry-run",
+  "source": {
+    "database": "ecc-operator-v1-production",
+    "table": "latest_completed_records",
+    "query_timestamp": "2026-09-07T06:54:56.797Z",
+    "query_sha256": "5d0bdba695062529b18a89b7315d4f6a102c9c42cd59c71cf1dbb29a164e5677"
+  },
+  "target": {
+    "database": "ecc-operator-v1-canonical",
+    "table": "canonical_records",
+    "query_timestamp": "2026-09-07T06:54:59.055Z",
+    "observed_row_count": 0
+  },
+  "counts": {
+    "candidates": 64,
+    "anomalies": 97,
+    "sourceTotal": 64,
+    "eligibleRows": 64,
+    "excludedRows": 0,
+    "excludedByForm": {},
+    "sourceByForm": {
+      "boiler-water-control-tests": 6,
+      "boiler-water-pretreatment-condensate-tests": 9,
+      "ecc-cooling-tower-water-control-tests": 6,
+      "gas-turbine-log-sheet": 19,
+      "integrator-readings": 5,
+      "yst-yk-chiller": 19
+    },
+    "dispositionCounts": {
+      "ready_with_warnings": 50,
+      "ready": 14
+    },
+    "targetCollisions": 0
+  },
+  "files": {
+    "records_ndjson_sha256": "193b348e51a91a573b987f750ce8a9d604a72e129ad958f040770593651a8569",
+    "anomalies_csv_sha256": "136e3e902b9b114c1b6437f94fd714bce16f542a948c78287ebecb05f0679730"
+  },
+  "manifest_sha256": "d63f53389b269a2a43d2b03f3855b8158c08ff0115d03aae209c5b2b36de4d76"
+}

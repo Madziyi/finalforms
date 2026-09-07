@@ -1,0 +1,384 @@
+[
+  {
+    "results": [
+      {
+        "canonical_records": 46
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.167
+      },
+      "duration": 0.167,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 46,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "form_key": "boiler-water-control-tests",
+        "count": 6
+      },
+      {
+        "form_key": "boiler-water-pretreatment-condensate-tests",
+        "count": 9
+      },
+      {
+        "form_key": "ecc-cooling-tower-water-control-tests",
+        "count": 6
+      },
+      {
+        "form_key": "gas-turbine-log-sheet",
+        "count": 10
+      },
+      {
+        "form_key": "integrator-readings",
+        "count": 5
+      },
+      {
+        "form_key": "yst-yk-chiller",
+        "count": 10
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.2302
+      },
+      "duration": 0.2302,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 46,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "time_slot": "03:00",
+        "count": 2
+      },
+      {
+        "time_slot": "07:00",
+        "count": 2
+      },
+      {
+        "time_slot": "11:00",
+        "count": 4
+      },
+      {
+        "time_slot": "15:00",
+        "count": 4
+      },
+      {
+        "time_slot": "19:00",
+        "count": 4
+      },
+      {
+        "time_slot": "23:00",
+        "count": 4
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.1431
+      },
+      "duration": 0.1431,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 43,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "excluded_slots": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.1046
+      },
+      "duration": 0.1046,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 23,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "numeric_observations": 958
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0637
+      },
+      "duration": 0.0637,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 958,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "derived_projections": 12
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0551
+      },
+      "duration": 0.0551,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 12,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "derived_numeric_observations": 50
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0605
+      },
+      "duration": 0.0605,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 50,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "legacy_tables": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0848
+      },
+      "duration": 0.0848,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 45,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "oat_persisted": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0851
+      },
+      "duration": 0.0851,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 6,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "retired_gas_persisted": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.1168
+      },
+      "duration": 0.1168,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 11,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "field_key": "m_alk",
+        "count": 6
+      },
+      {
+        "field_key": "oh_alk",
+        "count": 6
+      },
+      {
+        "field_key": "p_alk",
+        "count": 6
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.355
+      },
+      "duration": 0.355,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 976,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "canonical_id": "F01-2026-09-05-1",
+        "values_json": "{\"conductivity\":1098,\"ct_meter\":1103,\"f_chlorine\":0.08,\"orp\":355,\"ph\":9.1,\"ptsa\":103,\"pump_sp_st\":{\"first\":75,\"second\":60}}"
+      },
+      {
+        "canonical_id": "F02-2026-09-02-1-2",
+        "values_json": "{\"am\":70,\"bd\":0.06,\"blr_cond\":4468,\"blr_mo\":1.02,\"m_alk\":732,\"m_alk_burette\":36.6,\"oh_alk\":572,\"p_alk\":652,\"p_alk_burette\":32.6,\"ph\":12.1,\"sc\":400,\"so3\":200,\"sulfite\":61}"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.1382
+      },
+      "duration": 0.1382,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 4,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "key": "backfill_canonical_manifest_0a0d9d2c3b34eb3cd1410593bc4aa7317e656c0372daa921f381ede81ebd666d",
+        "value": "{\"applied_at\":\"2026-09-07T07:18:10.432Z\",\"count\":46,\"manifest_hash\":\"0a0d9d2c3b34eb3cd1410593bc4aa7317e656c0372daa921f381ede81ebd666d\",\"source_database\":\"ecc-operator-v1-production\",\"source_hash\":\"5d0bdba695062529b18a89b7315d4f6a102c9c42cd59c71cf1dbb29a164e5677\",\"target_database\":\"ecc-operator-v1-canonical\",\"tool_version\":\"1.0.0\"}"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ORD",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.0676
+      },
+      "duration": 0.0676,
+      "changes": 0,
+      "last_row_id": 4,
+      "changed_db": false,
+      "size_after": 520192,
+      "rows_read": 1,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  }
+]

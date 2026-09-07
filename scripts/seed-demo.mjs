@@ -100,9 +100,9 @@ const statements = ["PRAGMA foreign_keys = ON;"];
 for (let index = 0; index < sourceRows.length; index += 1) {
   const row = sourceRows[index];
   const [operatorId, operatorName] = operators[index % operators.length];
-  const aggregateId = `demo-integrator-${row.date}`;
+  const canonicalId = `F08-${row.date}`;
   const timestamp = `${row.date}T23:50:00.000Z`;
-  statements.push(`INSERT OR IGNORE INTO latest_completed_records(aggregate_id,form_key,form_version,context_key,operator_id,operator_name,plant_date,shift,time_slot,boiler_number,values_json,local_revision,created_at,updated_at,client_updated_at,freshness_tiebreaker) VALUES(${sql(aggregateId)},'integrator-readings',2,${sql(row.date)},${sql(operatorId)},${sql(operatorName)},${sql(row.date)},NULL,NULL,NULL,${json(row.values)},1,${sql(timestamp)},${sql(timestamp)},${sql(timestamp)},${sql(aggregateId)});`);
+  statements.push(`INSERT OR IGNORE INTO canonical_records(canonical_id,form_key,form_version,context_key,operator_id,operator_name,plant_date,shift,time_slot,boiler_number,values_json,generation,revision,created_at,updated_at,client_updated_at) VALUES(${sql(canonicalId)},'integrator-readings',2,${sql(row.date)},${sql(operatorId)},${sql(operatorName)},${sql(row.date)},NULL,NULL,NULL,${json(row.values)},1,1,${sql(timestamp)},${sql(timestamp)},${sql(timestamp)});`);
 }
 
 for (let index = 1; index < sourceRows.length; index += 1) {
@@ -117,8 +117,8 @@ for (let index = 1; index < sourceRows.length; index += 1) {
     tower_makeup_current: row.values.tower_makeup,
   };
   const refs = [previous, row].map((source) => ({
-    aggregateId: `demo-integrator-${source.date}`,
-    revisionId: `demo-integrator-${source.date}-r1`,
+    aggregateId: `F08-${source.date}`,
+    revisionId: `F08-${source.date}@r1`,
     revision: 1,
     plantDate: source.date,
   }));
@@ -143,7 +143,7 @@ writeFileSync(sqlPath, `${statements.join("\n")}\n`, "utf8");
 
 try {
   const wranglerPath = join(root, "node_modules", "wrangler", "bin", "wrangler.js");
-  const wranglerArgs = ["d1", "execute", "DB", remote ? "--remote" : "--local", "--file", sqlPath];
+  const wranglerArgs = ["d1", "execute", "DB", remote ? "--remote" : "--local", "--config", "wrangler.canonical.jsonc", "--file", sqlPath];
   execFileSync(process.execPath, [wranglerPath, ...wranglerArgs], { cwd: root, stdio: "inherit", shell: false });
   console.log(`Demo seed applied to ${remote ? "remote" : "local"} D1.`);
   console.log("Visible derived data: 2025-12-27 through 2026-01-09 (14 days). The 2025-12-26 Form 8 row supplies the first baseline.");

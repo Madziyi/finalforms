@@ -1,0 +1,190 @@
+[
+  {
+    "results": [
+      {
+        "canonical_records": 46
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 2
+    }
+  },
+  {
+    "results": [
+      {
+        "form_key": "boiler-water-control-tests",
+        "count": 6
+      },
+      {
+        "form_key": "boiler-water-pretreatment-condensate-tests",
+        "count": 9
+      },
+      {
+        "form_key": "ecc-cooling-tower-water-control-tests",
+        "count": 6
+      },
+      {
+        "form_key": "gas-turbine-log-sheet",
+        "count": 10
+      },
+      {
+        "form_key": "integrator-readings",
+        "count": 5
+      },
+      {
+        "form_key": "yst-yk-chiller",
+        "count": 10
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "time_slot": "03:00",
+        "count": 2
+      },
+      {
+        "time_slot": "07:00",
+        "count": 2
+      },
+      {
+        "time_slot": "11:00",
+        "count": 4
+      },
+      {
+        "time_slot": "15:00",
+        "count": 4
+      },
+      {
+        "time_slot": "19:00",
+        "count": 4
+      },
+      {
+        "time_slot": "23:00",
+        "count": 4
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "excluded_slots": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "numeric_observations": 958
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "derived_projections": 12
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "derived_numeric_observations": 50
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "legacy_tables": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "oat_persisted": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 1
+    }
+  },
+  {
+    "results": [
+      {
+        "retired_gas_persisted": 0
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "field_key": "m_alk",
+        "count": 6
+      },
+      {
+        "field_key": "oh_alk",
+        "count": 6
+      },
+      {
+        "field_key": "p_alk",
+        "count": 6
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 0
+    }
+  },
+  {
+    "results": [
+      {
+        "canonical_id": "F01-2026-09-05-1",
+        "values_json": "{\"conductivity\":1098,\"ct_meter\":1103,\"f_chlorine\":0.08,\"orp\":355,\"ph\":9.1,\"ptsa\":103,\"pump_sp_st\":{\"first\":75,\"second\":60}}"
+      },
+      {
+        "canonical_id": "F02-2026-09-02-1-2",
+        "values_json": "{\"am\":70,\"bd\":0.06,\"blr_cond\":4468,\"blr_mo\":1.02,\"m_alk\":732,\"m_alk_burette\":36.6,\"oh_alk\":572,\"p_alk\":652,\"p_alk_burette\":32.6,\"ph\":12.1,\"sc\":400,\"so3\":200,\"sulfite\":61}"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "duration": 1
+    }
+  }
+]

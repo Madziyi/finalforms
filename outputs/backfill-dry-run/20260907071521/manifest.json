@@ -1,0 +1,71 @@
+{
+  "version": "2.0.0",
+  "mode": "approved-dry-run",
+  "policy": {
+    "approved_form_counts": {
+      "ecc-cooling-tower-water-control-tests": 6,
+      "boiler-water-control-tests": 6,
+      "yst-yk-chiller": 10,
+      "boiler-water-pretreatment-condensate-tests": 9,
+      "integrator-readings": 5,
+      "gas-turbine-log-sheet": 10
+    },
+    "legacy_slots": [
+      "02:00",
+      "06:00",
+      "10:00",
+      "14:00",
+      "18:00",
+      "22:00"
+    ],
+    "slot_map": {
+      "02:00": "03:00",
+      "06:00": "07:00",
+      "10:00": "11:00",
+      "14:00": "15:00",
+      "18:00": "19:00",
+      "22:00": "23:00"
+    },
+    "forced_pump_source_aggregate_id": "c8911f6a-db6a-45da-a451-67a2ba4d4d87"
+  },
+  "source": {
+    "database": "ecc-operator-v1-production",
+    "table": "latest_completed_records",
+    "query_timestamp": "2026-09-07T07:15:17.273Z",
+    "query_sha256": "5d0bdba695062529b18a89b7315d4f6a102c9c42cd59c71cf1dbb29a164e5677"
+  },
+  "target": {
+    "database": "ecc-operator-v1-canonical",
+    "table": "canonical_records",
+    "query_timestamp": "2026-09-07T07:15:19.234Z",
+    "observed_row_count": 0
+  },
+  "counts": {
+    "candidates": 46,
+    "anomalies": 79,
+    "sourceTotal": 64,
+    "eligibleRows": 46,
+    "excludedRows": 18,
+    "excludedByForm": {
+      "gas-turbine-log-sheet": 9,
+      "yst-yk-chiller": 9
+    },
+    "sourceByForm": {
+      "boiler-water-control-tests": 6,
+      "boiler-water-pretreatment-condensate-tests": 9,
+      "ecc-cooling-tower-water-control-tests": 6,
+      "gas-turbine-log-sheet": 10,
+      "integrator-readings": 5,
+      "yst-yk-chiller": 10
+    },
+    "dispositionCounts": {
+      "ready": 46
+    },
+    "targetCollisions": 0
+  },
+  "files": {
+    "records_ndjson_sha256": "2dc8ffe4eeebb25fa5a90b9ac2349c60f3a07217a0abc459b35f63a36064ecd7",
+    "anomalies_csv_sha256": "b4626d154e3714ec11a8d6add66cc0528afc87b3efaf8bdbcb54f92f04ff9557"
+  },
+  "manifest_sha256": "0a0d9d2c3b34eb3cd1410593bc4aa7317e656c0372daa921f381ede81ebd666d"
+}

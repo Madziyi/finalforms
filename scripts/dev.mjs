@@ -7,7 +7,7 @@ mkdirSync(new URL("../dist", import.meta.url), { recursive: true });
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const shell = process.platform === "win32";
 const children = [
-  spawn(npx, ["wrangler", "dev", "--port", "8787"], { cwd: root, stdio: "inherit", shell }),
+  spawn(npx, ["wrangler", "dev", "--config", "wrangler.canonical.jsonc", "--port", "8787"], { cwd: root, stdio: "inherit", shell }),
   spawn(npx, ["vite"], { cwd: root, stdio: "inherit", shell }),
 ];
 let exiting = false;

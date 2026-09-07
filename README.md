@@ -1,14 +1,14 @@
-# ECC Operator Checks PWA — v2 Reliability Rebuild
+# ECC Operator Checks PWA — Canonical v3 Reliability Rebuild
 
 Clean-slate rebuild of the Energy Conversion Centre operator-checks tablet application.
 
 The design goal is local-first operation on one tablet. IndexedDB is the authoritative working copy for drafts and completed forms; completed snapshots upload continuously in the background and SharePoint remains a nightly backup.
 
-The active v2 reliability chain is:
+The active canonical v3 reliability chain is:
 
 **durable tablet entry → local completion → coalesced completed upload → latest Cloudflare record → nightly SharePoint backup**.
 
-The v1 command/revision endpoint and tables remain available only as a migration compatibility path.
+The canonical target uses only the canonical v3 migration set. Legacy v1 command/revision tables are not created in that target.
 
 The older v1 design goal was not merely “eventual sync.” It was a single observable reliability chain:
 
@@ -32,7 +32,8 @@ The older v1 design goal was not merely “eventual sync.” It was a single obs
 ## Project layout
 
 ```text
-migrations/                 baseline plus forward-only D1 migrations
+migrations-canonical/       canonical v3 D1 migrations
+migrations/                 legacy compatibility migrations (not for the canonical target)
 shared/                     form manifest, protocol/context rules, formulas
 src/                        React/Vite PWA
 worker/                     Cloudflare Worker API, D1 domain logic, Workflow
@@ -97,13 +98,13 @@ Then:
 npm run provision:cloud
 ```
 
-If `wrangler.jsonc` still contains the zero UUID placeholder, this command:
+If `wrangler.canonical.jsonc` still contains the zero UUID placeholder, this command:
 
-1. creates `ecc-operator-v1-production` in D1,
+1. creates a fresh canonical production database in D1,
 2. parses the returned database UUID,
-3. writes that UUID into `wrangler.jsonc`,
-4. applies the forward-only migrations, including the legacy completed-record backfill, and
-5. verifies that the production target has the expected schema/seeds and **zero operational rows**.
+3. writes that UUID into `wrangler.canonical.jsonc`,
+4. applies only the canonical v3 migrations, and
+5. verifies that the production target has the expected canonical schema/seeds and **zero operational rows**.
 
 To deliberately create another brand-new production target later, while leaving the previous database untouched:
 
@@ -111,11 +112,11 @@ To deliberately create another brand-new production target later, while leaving 
 npm run provision:cloud -- --force-new
 ```
 
-The new database receives a timestamped name and `wrangler.jsonc` is rebound to it.
+The new database receives a timestamped name and `wrangler.canonical.jsonc` is rebound to it.
 
 ## 4. Configure secrets
 
-Do not put secrets in `wrangler.jsonc` or source control.
+Do not put secrets in `wrangler.canonical.jsonc` or source control.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\configure-secrets.ps1
@@ -157,7 +158,7 @@ After deploy:
 npm run verify:cloud
 ```
 
-This reports v2 schema metadata and operational counts without requiring them to remain zero.
+This reports canonical v3 schema metadata and operational counts without requiring them to remain zero.
 
 ## 7. Tablet installation
 

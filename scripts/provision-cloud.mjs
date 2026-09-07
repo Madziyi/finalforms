@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 
 const forceNew = process.argv.includes("--force-new");
 const root = fileURLToPath(new URL("..", import.meta.url));
-const configPath = new URL("../wrangler.jsonc", import.meta.url);
+const configPath = new URL("../wrangler.canonical.jsonc", import.meta.url);
+const configName = "wrangler.canonical.jsonc";
 const configText = readFileSync(configPath, "utf8");
 const idMatch = configText.match(/"database_id"\s*:\s*"([^"]+)"/);
 const nameMatch = configText.match(/"database_name"\s*:\s*"([^"]+)"/);
-if (!idMatch || !nameMatch) throw new Error("wrangler.jsonc is missing the D1 database binding.");
+if (!idMatch || !nameMatch) throw new Error("wrangler.canonical.jsonc is missing the D1 database binding.");
 const existingId = idMatch[1];
 const existingName = nameMatch[1];
 const placeholder = "00000000-0000-0000-0000-000000000000";
@@ -21,7 +22,7 @@ function run(args, options = {}) {
     ? [join(root, "node_modules", "wrangler", "bin", "wrangler.js"), ...args.slice(1)]
     : args;
   console.log(`> ${process.platform === "win32" ? "wrangler" : "npx wrangler"} ${args.slice(1).join(" ")}`);
-  return execFileSync(command, commandArgs, {
+  return execFileSync(command, [...commandArgs, "--config", configName], {
     cwd: root,
     encoding: "utf8",
     stdio: options.capture ? ["inherit", "pipe", "pipe"] : "inherit",
@@ -57,7 +58,7 @@ function applyRemoteMigrations() {
 
   const appliedResponse = runJson(["wrangler", "d1", "execute", "DB", "--remote", "--command", "SELECT name FROM d1_migrations ORDER BY id;"]);
   const applied = new Set(resultRows(appliedResponse).map((row) => row.name));
-  const migrationNames = readdirSync(join(root, "migrations"))
+  const migrationNames = readdirSync(join(root, "migrations-canonical"))
     .filter((name) => /^\d+_.+\.sql$/i.test(name))
     .sort();
   const tempRoot = mkdtempSync(join(tmpdir(), "ecc-d1-migrations-"));
@@ -65,7 +66,7 @@ function applyRemoteMigrations() {
   try {
     for (const migrationName of migrationNames) {
       if (applied.has(migrationName)) continue;
-      const migrationSql = readFileSync(join(root, "migrations", migrationName), "utf8");
+      const migrationSql = readFileSync(join(root, "migrations-canonical", migrationName), "utf8");
       const bundledPath = join(tempRoot, migrationName);
       const escapedName = migrationName.replaceAll("'", "''");
       writeFileSync(bundledPath, `${migrationSql}\nINSERT INTO d1_migrations (name) VALUES ('${escapedName}');\n`);
@@ -79,7 +80,7 @@ function applyRemoteMigrations() {
 let databaseName = existingName;
 if (forceNew) {
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 12);
-  databaseName = `ecc-operator-v1-production-${stamp}`;
+  databaseName = `ecc-operator-canonical-production-${stamp}`;
 }
 
 if (existingId === placeholder || forceNew) {
@@ -100,7 +101,7 @@ if (existingId === placeholder || forceNew) {
   next = next.replace(/"database_name"\s*:\s*"[^"]+"/, `"database_name": "${databaseName}"`);
   next = next.replace(/"database_id"\s*:\s*"[^"]+"/, `"database_id": "${uuid}"`);
   writeFileSync(configPath, next);
-  console.log(`Updated wrangler.jsonc with D1 id ${uuid}`);
+  console.log(`Updated wrangler.canonical.jsonc with D1 id ${uuid}`);
 } else {
   console.log(`Using configured D1 database ${existingName} (${existingId}).`);
 }

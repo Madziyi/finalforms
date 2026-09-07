@@ -1,17 +1,17 @@
-# Production Cutover Checklist
+# Production Cutover Checklist — Canonical v3
 
 Do not enable operator use until every required item is checked.
 
-## Fresh target
+## Fresh canonical target
 
 - [ ] `npm install` completed without unresolved audit/build errors.
 - [ ] `npm run check` passes.
 - [ ] `npm test` passes.
 - [ ] `npm run db:reset:local` and `npm run smoke:local` pass.
 - [ ] `npm run provision:cloud -- --force-new` used if a truly fresh production database is required.
-- [ ] Provisioning reports 7+ operator seed rows and zero operational rows.
-- [ ] `wrangler.jsonc` points to the intended new D1 UUID.
-- [ ] No legacy operational rows were copied into the new database.
+- [ ] Provisioning reports the canonical v3 schema, 7+ operator seed rows and zero canonical operational rows.
+- [ ] `wrangler.canonical.jsonc` points to the intended new D1 UUID.
+- [ ] No legacy tables or operational rows were copied into the canonical database.
 
 ## Secrets and deployment
 

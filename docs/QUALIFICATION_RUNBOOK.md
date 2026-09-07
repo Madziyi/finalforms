@@ -1,4 +1,4 @@
-# ECC v1 Adversarial Qualification Runbook
+# ECC Canonical v3 Adversarial Qualification Runbook
 
 Run against disposable/local data first, then a production-shaped disposable Cloudflare target. Record screenshots/logs/results. Do not use real operator readings for destructive scenarios.
 
@@ -24,7 +24,7 @@ Run against disposable/local data first, then a production-shaped disposable Clo
 
 ## C. Context ownership / explicit replacement
 
-1. Two brand-new aggregates claim the same date/time (Form 3/4/9) from separate offline sessions. One may win; the other must become Collision/Attention.
+1. Two brand-new canonical records claim the same date/time (Form 3/4/9) from separate offline sessions. One may win; the other must become Collision/Attention.
 2. Choose **Keep existing destination**. No replacement occurs.
 3. Repeat collision and choose **Replace destination** after confirmation. Destination receives a superseded immutable revision; source takes context; both histories remain queryable.
 4. Change the destination between collision and Replace. Replace must conflict rather than overwrite newer work.

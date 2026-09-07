@@ -8,7 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // It never touches the configured remote D1 database.
 rmSync(resolve(root, ".wrangler", "state"), { recursive: true, force: true });
 const command = process.platform === "win32" ? "npx.cmd" : "npx";
-execFileSync(command, ["wrangler", "d1", "migrations", "apply", "DB", "--local"], {
+execFileSync(command, ["wrangler", "d1", "migrations", "apply", "DB", "--local", "--config", "wrangler.canonical.jsonc"], {
   cwd: root,
   stdio: "inherit",
   shell: process.platform === "win32",
