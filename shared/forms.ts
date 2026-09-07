@@ -175,7 +175,7 @@ export const FORMS: FormDefinition[] = [
     backupWorksheetName: "05 Daily Consumption",
     schedule: "derived",
     derivedFrom: "integrator-readings",
-    description: "Read-only local projection from the exact completed Form 8 records for this date and the previous calendar date.",
+    description: "Read-only local-first projection from exact completed Form 8 dates, with the canonical server projection as fallback.",
     sections: [
       section("weather", "Outside Air Temperature", [
         n("oat_high", "OAT High", { calculated: true }),
@@ -211,7 +211,7 @@ export const FORMS: FormDefinition[] = [
     backupWorksheetName: "06 Makeup",
     schedule: "derived",
     derivedFrom: "integrator-readings",
-    description: "Read-only local projection from the exact current and previous calendar-date Form 8 records.",
+    description: "Read-only local-first projection from exact current and previous calendar-date Form 8 records, with server fallback.",
     sections: [
       section("readings", "Derived Makeup Readings", [
         n("cw_makeup_current", "C.W. Makeup — Current Reading", { calculated: true }),

@@ -23,8 +23,8 @@ The older v1 design goal was not merely “eventual sync.” It was a single obs
 - Completed forms can be edited through a temporary local edit; canceling or leaving the page discards it.
 - A normalized form/context has one local entry. Duplicate context offers Open existing, Replace existing, or Cancel.
 - Form 2 `OH-ALK` is recalculated by both UI and Worker as `(P-ALK × 2) - M-ALK`; the Worker is authoritative.
-- Forms 5 and 6 are server-owned projections from exact completed Form 8 records. Missing calendar dates produce Waiting; they never block completion or backup.
-- Forms 5/6 are read-only local/server projections from exact Form 8 dates. Negative deltas are retained with warnings.
+- Forms 5 and 6 remain canonical D1 projections, while the tablet may calculate an ephemeral local-first view from exact completed Form 8/9 sources. Missing calendar dates produce Waiting; they never block completion or backup.
+- Forms 5/6 are read-only local-first projections with server fallback. Eligible local sources win per exact Form 8 date and Form 9 time slot; negative deltas are retained with warnings.
 - Backup files contain only completed cloud records and available Form 5/Form 6 projections, including Waiting outputs.
 - **Backed up / verified** is recorded only after Power Automate echoes the exact generation ID, payload hash and immutable filenames.
 - Form saving and sync never depend on SharePoint availability.

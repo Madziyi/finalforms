@@ -99,7 +99,7 @@ OH-ALK = (P-ALK × 2) - M-ALK
 The UI computes it for immediate feedback. The submitted OH-ALK value is ignored and the Worker recomputes the authoritative accepted value.
 
 ### Forms 5 and 6
-They are **server-owned projections**, never ordinary tablet submissions.
+They remain **canonical server projections**, never ordinary tablet submissions. The tablet may calculate an ephemeral local-first presentation from durable source records and use the canonical projection as fallback.
 
 An accepted published Form 8 revision atomically marks the affected dates stale and marks their backups dirty. Derivation then runs independently. If derivation fails, Form 8 is still safely accepted and Attention records the projection problem.
 

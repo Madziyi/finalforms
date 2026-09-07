@@ -1,6 +1,6 @@
 import { allFields, getForm } from "../../shared/forms";
 import { deriveForm8OatExtrema, FORM8_OAT_EXTREME_KEYS, type Form8OatExtrema } from "../../shared/form8Oat";
-import type { CanonicalRecord, ContextInput } from "../../shared/types";
+import type { CanonicalRecord, ContextInput, Values } from "../../shared/types";
 import { listPublicRecords, listRecords } from "./api";
 import { getDeviceToken } from "./device";
 import { listLocalEntries } from "./offlineDb";
@@ -21,15 +21,21 @@ export async function resolveForm8OatExtrema(context: ContextInput): Promise<For
   const sourceDate = context.date;
   const fieldKey = oatFieldKey();
   const local = await listLocalEntries(FORM9_KEY);
-  const localResult = deriveForm8OatExtrema(local.map(entry => ({ ...entry, date: entry.context.date, timeSlot: entry.context.timeSlot })), sourceDate, fieldKey);
-  if (localResult.status === "ready") return localResult;
-
-  try {
-    const remote = getDeviceToken() ? await listRecords(FORM9_KEY, sourceDate) : await listPublicRecords(FORM9_KEY, sourceDate);
-    const remoteResult = deriveForm8OatExtrema(remote.records as CanonicalRecord[], sourceDate, fieldKey);
-    if (remoteResult.status === "ready") return remoteResult;
-  } catch {
-    // No cloud data or an unavailable connection leaves the derived fields blank.
+  const bySlot = new Map<string, { date: string; timeSlot: string; values: Values; status: string; lifecycle: string }>();
+  for (const entry of local) {
+    if (entry.status !== "completed" || entry.temporaryEdit || entry.context.date !== sourceDate || !entry.context.timeSlot) continue;
+    bySlot.set(entry.context.timeSlot, { date: sourceDate, timeSlot: entry.context.timeSlot, values: entry.values, status: "completed", lifecycle: "completed" });
   }
-  return { status: "hidden", values: {} };
+  if (navigator.onLine) {
+    try {
+      const remote = getDeviceToken() ? await listRecords(FORM9_KEY, sourceDate) : await listPublicRecords(FORM9_KEY, sourceDate);
+      for (const record of remote.records as CanonicalRecord[]) {
+        if (record.lifecycle !== "completed" || record.date !== sourceDate || !record.timeSlot || bySlot.has(record.timeSlot)) continue;
+        bySlot.set(record.timeSlot, { date: record.date, timeSlot: record.timeSlot, values: record.values, status: "completed", lifecycle: "completed" });
+      }
+    } catch {
+      // A local result remains usable when the cloud lookup is unavailable.
+    }
+  }
+  return deriveForm8OatExtrema([...bySlot.values()], sourceDate, fieldKey);
 }

@@ -65,6 +65,7 @@ export async function migrateV1LocalData() {
   const old=await offlineDb.aggregates.toArray();
   await offlineDb.transaction("rw",offlineDb.entries,offlineDb.meta,async()=>{
     for(const aggregate of old){
+      if(getForm(aggregate.formKey)?.schedule==="derived")continue;
       if(await offlineDb.entries.get(aggregate.aggregateId))continue;
       const next=normalizedEntry(localEntryFromAggregate(aggregate),aggregate.updatedAt);
       const collision=await contextCollision(next,aggregate.aggregateId);
@@ -79,6 +80,7 @@ export function contextInput(entry:Pick<LocalEntry,"context">):ContextInput { re
 export function contextKeyFor(formKey:string,context:ContextInput):string|null { try{return normalizeContext(formKey,context);}catch{return null;} }
 export function newLocalEntry(formKey:string,date=new Date().toISOString().slice(0,10)):LocalEntry { const form=getForm(formKey);if(!form)throw new Error("Unknown form");const now=new Date().toISOString();return {entryId:crypto.randomUUID(),formKey,formVersion:form.version,contextKey:contextKeyFor(formKey,{date}),context:{date},operatorId:null,operator:"",values:defaultValues(formKey),status:"draft",localVersion:0,createdAt:now,updatedAt:now,completedAt:null,temporaryEdit:false,storageError:null,uploadError:null}; }
 function entryVersion(entry:Pick<LocalEntry,"localVersion">|Partial<LocalEntry>){return Number.isInteger(entry.localVersion)&&Number(entry.localVersion)>=0?Number(entry.localVersion):0;}
+function assertPersistableForm(formKey:string){if(getForm(formKey)?.schedule==="derived")throw new Error("Derived projections are read-only and cannot be stored or uploaded as entries.");}
 function normalizedEntry(entry:LocalEntry,updatedAt=new Date().toISOString()):LocalEntry{
   const next={...entry,localVersion:entryVersion(entry),context:structuredClone(entry.context),contextKey:contextKeyFor(entry.formKey,entry.context),values:structuredClone(entry.values),updatedAt,storageError:null};
   if(next.status!=="completed") return next;
@@ -101,7 +103,7 @@ export class DuplicateContextError extends Error {
 function assertCompletableEntry(next:LocalEntry){
   if(next.status==="completed"&&!next.contextKey)throw new Error("Completed entries require a complete normalized context.");
 }
-export async function saveLocalEntry(entry:LocalEntry):Promise<LocalEntry>{const next=normalizedEntry(entry);try{await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{const existing=await offlineDb.entries.get(next.entryId);if(existing&&entryVersion(existing)>next.localVersion)throw new Error("A newer local entry version already exists on this tablet.");assertCompletableEntry(next);const collision=await contextCollision(next,entry.entryId);if(collision)throw new DuplicateContextError(collision);if(entry.entryId!==next.entryId){await offlineDb.entries.delete(entry.entryId);await offlineDb.completedSync.delete(entry.entryId);}await offlineDb.entries.put(next);});emit("entry-saved",{entryId:next.entryId,localVersion:next.localVersion});return next;}catch(error){if(error instanceof DuplicateContextError)throw error;const message=`Local storage save failed: ${error instanceof Error?error.message:String(error)}. Check free space, browser storage permission, and reload only after the entry is safe.`;try{await offlineDb.entries.update(entry.entryId,{storageError:message});}catch{/* the diagnostic itself may be unable to persist */}throw new Error(message);}}
+export async function saveLocalEntry(entry:LocalEntry):Promise<LocalEntry>{assertPersistableForm(entry.formKey);const next=normalizedEntry(entry);try{await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{const existing=await offlineDb.entries.get(next.entryId);if(existing&&entryVersion(existing)>next.localVersion)throw new Error("A newer local entry version already exists on this tablet.");assertCompletableEntry(next);const collision=await contextCollision(next,entry.entryId);if(collision)throw new DuplicateContextError(collision);if(entry.entryId!==next.entryId){await offlineDb.entries.delete(entry.entryId);await offlineDb.completedSync.delete(entry.entryId);}await offlineDb.entries.put(next);});emit("entry-saved",{entryId:next.entryId,localVersion:next.localVersion});return next;}catch(error){if(error instanceof DuplicateContextError)throw error;const message=`Local storage save failed: ${error instanceof Error?error.message:String(error)}. Check free space, browser storage permission, and reload only after the entry is safe.`;try{await offlineDb.entries.update(entry.entryId,{storageError:message});}catch{/* the diagnostic itself may be unable to persist */}throw new Error(message);}}
 export async function loadLocalEntry(id:string){return offlineDb.entries.get(id);}
 export async function listLocalEntries(formKey?:string){return formKey?offlineDb.entries.where("formKey").equals(formKey).reverse().sortBy("updatedAt"):offlineDb.entries.orderBy("updatedAt").reverse().toArray();}
 export async function findLocalEntry(formKey:string,key:string){return (await offlineDb.entries.where("[formKey+contextKey]").equals([formKey,key]).first())??null;}
@@ -117,6 +119,7 @@ export async function deleteLocalEntry(entryId:string){await offlineDb.transacti
  * removed by this helper.
  */
 export async function adoptExistingEntry(sourceEntryId:string,target:LocalEntry,discardSource:boolean){
+  assertPersistableForm(target.formKey);
   const saved=normalizedEntry(target,target.updatedAt);
   let result=saved;
   await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{
@@ -139,6 +142,7 @@ export async function adoptExistingEntry(sourceEntryId:string,target:LocalEntry,
 }
 /** Replace an entry atomically. Used by the duplicate-context flow. */
 export async function replaceLocalEntry(sourceEntryId:string,next:LocalEntry,options:{queueCompleted?:boolean}={}){
+  assertPersistableForm(next.formKey);
   const saved=normalizedEntry(next);
   assertCompletableEntry(saved);
   await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{
@@ -162,7 +166,7 @@ export async function replaceLocalEntry(sourceEntryId:string,next:LocalEntry,opt
 export async function saveLocalAggregateAsEntry(aggregate:LocalAggregate){const entry=await saveLocalEntry(localEntryFromAggregate(aggregate));return {...aggregateFromEntry(entry),checkpointVersion:aggregate.checkpointVersion,serverRecord:aggregate.serverRecord,publishedRecord:aggregate.publishedRecord};}
 export async function discardTemporaryEdit(baseline:LocalEntry,minimumVersion=entryVersion(baseline)){const current=await offlineDb.entries.get(baseline.entryId);const restored={...baseline,temporaryEdit:false,localVersion:Math.max(entryVersion(baseline),entryVersion(current??baseline),minimumVersion)+1,uploadError:null};if(restored.status==="completed")return replaceLocalEntry(restored.entryId,restored,{queueCompleted:false});return saveLocalEntry(restored);}
 export async function localEntryToRecord(entry:LocalEntry):Promise<CanonicalRecord>{const contextKey=entry.contextKey??contextKeyFor(entry.formKey,entry.context)??entry.context.date;const version=Math.max(1,entryVersion(entry));return {aggregateId:entry.entryId,formKey:entry.formKey,contextKey,revision:version,generation:version,publishedRevision:entry.status==="completed"?version:null,lifecycle:entry.status,operatorId:entry.operatorId,operator:entry.operator,date:entry.context.date,shift:entry.context.shift??null,timeSlot:entry.context.timeSlot??null,boilerNumber:entry.context.boilerNumber??null,values:structuredClone(entry.values),createdAt:entry.createdAt,updatedAt:entry.updatedAt,provenance:{source:"canonical-sync",status:entry.status,localVersion:version,uploadError:entry.uploadError??null}};}
-async function putCompletedSync(entry:LocalEntry){const record=await localEntryToRecord(entry);const revision=Math.max(1,entryVersion(entry));const existing=await offlineDb.completedSync.get(entry.entryId);const existingVersion=existing?entryVersion({localVersion:existing.payload.localVersion}):-1;if(existing&&existingVersion>revision)return existing;const payload:CompletedRecordUpload={protocolVersion:3,syncId:existing&&existingVersion===revision?existing.payload.syncId:crypto.randomUUID(),record:record as CanonicalRecord & {lifecycle:"completed"},generation:revision,localVersion:revision,baseRevision:entry.baseRevision??null,clientUpdatedAt:entry.updatedAt,movedFromId:entry.movedFromId??null};const item:CompletedSyncItem={entryId:entry.entryId,payload,status:"pending",attempts:0,nextAttemptAt:null,lastError:null,updatedAt:new Date().toISOString()};await offlineDb.completedSync.put(item);return item;}
+async function putCompletedSync(entry:LocalEntry){assertPersistableForm(entry.formKey);const record=await localEntryToRecord(entry);const revision=Math.max(1,entryVersion(entry));const existing=await offlineDb.completedSync.get(entry.entryId);const existingVersion=existing?entryVersion({localVersion:existing.payload.localVersion}):-1;if(existing&&existingVersion>revision)return existing;const payload:CompletedRecordUpload={protocolVersion:3,syncId:existing&&existingVersion===revision?existing.payload.syncId:crypto.randomUUID(),record:record as CanonicalRecord & {lifecycle:"completed"},generation:revision,localVersion:revision,baseRevision:entry.baseRevision??null,clientUpdatedAt:entry.updatedAt,movedFromId:entry.movedFromId??null};const item:CompletedSyncItem={entryId:entry.entryId,payload,status:"pending",attempts:0,nextAttemptAt:null,lastError:null,updatedAt:new Date().toISOString()};await offlineDb.completedSync.put(item);return item;}
 export type CompleteLocalEntryOptions={
   sourceEntryId?:string;
   expectedSourceVersion?:number|null;
@@ -170,6 +174,7 @@ export type CompleteLocalEntryOptions={
 };
 /** Atomically promote/replace a completed entry and create its upload outbox item. */
 export async function completeLocalEntry(entry:LocalEntry,options:CompleteLocalEntryOptions={}):Promise<LocalEntry>{
+  assertPersistableForm(entry.formKey);
   const saved=normalizedEntry({...entry,status:"completed",temporaryEdit:false,uploadError:null});
   const sourceEntryId=options.sourceEntryId??entry.entryId;
   const expected=options.expectedTarget??null;
@@ -239,6 +244,7 @@ export async function localUploadFailures(){return offlineDb.completedSync.where
 export async function purgeExpiredLocalData(now=new Date()){const cutoff=new Date(now);cutoff.setMonth(cutoff.getMonth()-14);const iso=cutoff.toISOString();const entries=await offlineDb.entries.where("updatedAt").below(iso).toArray();if(!entries.length)return 0;await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{for(const entry of entries){await offlineDb.entries.delete(entry.entryId);await offlineDb.completedSync.delete(entry.entryId);}});emit("expired-local-data-purged",{count:entries.length});return entries.length;}
 function checkpointComparable(value:LocalAggregate){return JSON.stringify({formKey:value.formKey,formVersion:value.formVersion,operatorId:value.operatorId,operator:value.operator,date:value.date,shift:value.shift,timeSlot:value.timeSlot,boilerNumber:value.boilerNumber,workingValues:value.workingValues,localLifecycle:value.localLifecycle,amendment:value.amendment,moveIntent:value.moveIntent});}
 async function writeCheckpoint(next:LocalAggregate){
+  assertPersistableForm(next.formKey);
   await offlineDb.transaction("rw",offlineDb.aggregates,offlineDb.meta,async()=>{
     const existing=await offlineDb.aggregates.get(next.aggregateId);
     if(existing&&existing.checkpointVersion>next.checkpointVersion) throw new Error("A newer durable checkpoint already exists from another tab. Reload this record before continuing.");

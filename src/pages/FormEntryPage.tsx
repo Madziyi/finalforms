@@ -10,13 +10,13 @@ import { beginTemporaryEdit, prepareTemporaryReplacement } from "../lib/entryWor
 import { todayPlantDate } from "../lib/format";
 import { resolveForm2DailyTotals } from "../lib/form2DailyTotals";
 import { FORM8_OAT_EXTREME_KEYS, resolveForm8OatExtrema } from "../lib/form8OatExtrema";
-import { calculateForm5And6, calculateOhAlk } from "../../shared/formulas";
-import { deriveForm8OatExtrema } from "../../shared/form8Oat";
-import { nextCalendarDate, normalizeContext, SHIFT_OPTIONS, shiftMeasuredAt } from "../../shared/safetyContract";
+import { calculateOhAlk } from "../../shared/formulas";
+import { normalizeContext, SHIFT_OPTIONS, shiftMeasuredAt } from "../../shared/safetyContract";
 import { FORM2_DAILY_TOTAL_KEYS } from "../../shared/form2DailyTotals";
+import { projectionOriginLabel, resolveDerivedProjection, type ResolvedDerivedProjection } from "../lib/derivedProjections";
 import { adoptExistingEntry, completeLocalEntry, DuplicateContextError, getOperators, listLocalEntries, loadLocalEntry, localEntryFromRecord, newLocalEntry, saveLocalEntry, type LocalEntry } from "../lib/offlineDb";
 import { onUpdateCheckpointRequest, setEditActive } from "../lib/pwaUpdateCoordinator";
-import type { CanonicalRecord, FieldValue } from "../types";
+import type { FieldValue } from "../types";
 import { BOILERS, TIME_SLOTS } from "../types";
 type HistoryPoint = HistoryMap[string][number];
 function localMeasuredAt(entry: LocalEntry) {
@@ -114,86 +114,51 @@ function DerivedFormPage({
 }) {
   const form = getForm(formKey)!;
   const [date, setDate] = useState(todayPlantDate());
-  const [record, setRecord] = useState<CanonicalRecord | null>(null);
-  const [history, setHistory] = useState<HistoryMap>({});
+  const [projection, setProjection] = useState<ResolvedDerivedProjection>({ record: null, origin: null, status: "waiting", warnings: [], sources: [] });
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
-  async function load() {
-    setBusy(true);
-    setMessage(null);
-    try {
-      // Form 5/6 are local projections. A server response or an older cached
-      // projection must never become an input to the calculation.
-      const [entries, form9Entries] = await Promise.all([
-        listLocalEntries("integrator-readings"),
-        listLocalEntries("gas-turbine-log-sheet")
-      ]);
-      const current = entries.find(x => x.context.date === date && x.status === "completed" && !x.temporaryEdit);
-      const previousDate = nextCalendarDate(date, -1);
-      const previous = entries.find(x => x.context.date === previousDate && x.status === "completed" && !x.temporaryEdit);
-      if (!current && !previous) {
-        setRecord(null);
-        setHistory({});
-        return;
-      }
-      const oatExtrema = deriveForm8OatExtrema(
-        form9Entries.map(entry => ({
-          date: entry.context.date,
-          timeSlot: entry.context.timeSlot,
-          values: entry.values,
-          status: entry.status,
-          temporaryEdit: entry.temporaryEdit
-        })),
-        date,
-        "oat_memorial"
-      );
-      const calculated = calculateForm5And6({
-        currentValues: current?.values ?? {},
-        previousValues: previous?.values ?? {},
-        currentDate: date,
-        previousDate,
-        hasCurrent: Boolean(current),
-        hasPrevious: Boolean(previous)
-      });
-      const values = formKey === "daily-consumption-totals" ? calculated.form5 : calculated.form6;
-      if (formKey === "daily-consumption-totals") {
-        values.oat_high = oatExtrema.values.oat_high ?? null;
-        values.oat_low = oatExtrema.values.oat_low ?? null;
-      }
-      setRecord({
-        aggregateId: `local-projection-${formKey}-${date}`,
-        formKey,
-        contextKey: date,
-        revision: 0,
-        publishedRevision: 0,
-        lifecycle: "completed",
-        operatorId: null,
-        operator: "System",
-        date,
-        shift: null,
-        timeSlot: null,
-        boilerNumber: null,
-        values,
-        createdAt: current?.createdAt ?? previous?.createdAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        provenance: {
-          status: calculated.status,
-          warnings: calculated.warnings,
-          source: "local-form8-and-form9"
-        }
-      });
-      setHistory({});
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
-  }
   useEffect(() => {
+    let active = true;
+    let sequence = 0;
+    let controller: AbortController | null = null;
+    const load = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      const request = ++sequence;
+      setBusy(true);
+      setMessage(null);
+      setProjection({ record: null, origin: null, status: "waiting", warnings: [], sources: [] });
+      try {
+        const local = await resolveDerivedProjection(formKey, date, { online: false, signal: controller.signal });
+        if (!active || request !== sequence) return;
+        if (local.record) setProjection(local);
+        if (navigator.onLine) {
+          const remote = await resolveDerivedProjection(formKey, date, { signal: controller.signal });
+          if (!active || request !== sequence) return;
+          if (remote.record || !local.record) setProjection(remote);
+        } else {
+          setProjection(local);
+        }
+      } catch (error) {
+        if (!active || request !== sequence || error instanceof DOMException && error.name === "AbortError") return;
+        setMessage(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (active && request === sequence) setBusy(false);
+      }
+    };
     void load();
+    const refresh = () => void load();
+    window.addEventListener("ecc-local-change", refresh);
+    return () => {
+      active = false;
+      sequence += 1;
+      controller?.abort();
+      window.removeEventListener("ecc-local-change", refresh);
+    };
   }, [date, formKey]);
-  return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · read-only local projection</div><h1>{form.name}</h1><p>{form.description}</p></div></div><div className="metadata-panel"><label className="metadata-field"><span>Plant date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label><div className="metadata-field"><span>Projection status</span><div className={`notice ${(record?.provenance as any)?.status === "current" ? "" : "warning"}`}><ShieldCheck size={17} /> {(record?.provenance as any)?.status ?? "waiting"}</div></div></div>{message && <div className="notice warning"><CircleAlert size={18} />{message}</div>}{!record ? <div className="empty-state"><h2>{busy ? "Loading…" : "Waiting"}</h2><p>Exact completed Form 8 source dates are required. No server or cached projection is used.</p></div> : <><FormRenderer form={form} values={record.values} history={history} disabled onChange={() => undefined} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="safety-status-banner"><ShieldCheck size={18} /><div><strong>Read-only projection</strong><span>Form 5 and Form 6 are calculated locally from exact completed Form 8 dates. Negative deltas are retained and flagged for review.</span></div></div></>}</div>;
+  const record = projection.record;
+  return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · read-only projection</div><h1>{form.name}</h1><p>{form.description}</p></div></div><div className="metadata-panel"><label className="metadata-field"><span>Plant date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label><div className="metadata-field"><span>Projection status</span><div className={`notice ${projection.status === "current" ? "" : "warning"}`}><ShieldCheck size={17} /> {projectionOriginLabel(projection.origin, projection.status)}</div></div></div>{message && <div className="notice warning"><CircleAlert size={18} />{message}</div>}{!record ? <div className="empty-state"><h2>{busy ? "Loading…" : "Waiting"}</h2><p>Exact completed Form 8 source dates are required. Server projection fallback is used when this tablet has no local source override.</p></div> : <><FormRenderer form={form} values={record.values} history={{}} disabled onChange={() => undefined} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="safety-status-banner"><ShieldCheck size={18} /><div><strong>{projectionOriginLabel(projection.origin, projection.status)}</strong><span>{projection.warnings.length ? projection.warnings.join(" ") : "Read-only values use exact completed Form 8 dates and same-date Form 9 slots. Negative deltas are retained and flagged for review."}</span></div></div></>}</div>;
 }
 export function FormEntryPage() {
   const {

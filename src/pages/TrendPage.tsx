@@ -5,6 +5,7 @@ import { Brush, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XA
 import { allFields, getForm } from "../forms";
 import { getPublicTrend, getTrend } from "../lib/api";
 import { getDeviceToken } from "../lib/device";
+import { derivedTrendPoints } from "../lib/derivedProjections";
 import { listLocalEntries } from "../lib/offlineDb";
 import { displayNumber, formatTimestamp, historyLabel } from "../lib/format";
 import { shiftMeasuredAt } from "../../shared/safetyContract";
@@ -143,11 +144,15 @@ export function TrendPage() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setMessage(null);
     setPoints([]);
     const loadTrend = authenticated ? getTrend : getPublicTrend;
     void (async () => {
+      if (form?.schedule === "derived" && authenticated) {
+        return derivedTrendPoints(formKey, selectedFieldKey, { online: navigator.onLine, signal: controller.signal });
+      }
       const remote = await loadTrend(formKey, selectedFieldKey, pointRange);
       if (!authenticated) return remote.points;
       const local = await listLocalEntries(formKey);
@@ -169,6 +174,7 @@ export function TrendPage() {
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [authenticated, formKey, pointRange, retryCount, selectedFieldKey]);
   if (!form) return <div className="empty-state"><h1>Unknown form</h1><p>This trend view is not available for the selected form.</p></div>;

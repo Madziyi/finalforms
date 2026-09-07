@@ -1,10 +1,11 @@
 import { ArrowLeft, Bookmark, CircleAlert, Cloud, CloudOff, RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { FORMS, getForm } from "../forms";
 import { listPublicRecords, listRecords } from "../lib/api";
 import { getDeviceToken } from "../lib/device";
 import { formatTimestamp } from "../lib/format";
+import { listResolvedDerivedProjections, projectionOriginLabel, type ResolvedDerivedProjection } from "../lib/derivedProjections";
 import { listLocalEntries, localEntryFromRecord, type LocalEntry } from "../lib/offlineDb";
 import type { CanonicalRecord } from "../types";
 
@@ -30,6 +31,7 @@ export function DataPage(){
   const[formKey,setFormKey]=useState(routeFormKey??FORMS[0].key);
   const[entries,setEntries]=useState<LocalEntry[]>([]);
   const[cloudRecords,setCloudRecords]=useState<CanonicalRecord[]>([]);
+  const[projections,setProjections]=useState<ResolvedDerivedProjection[]>([]);
   const[authenticated,setAuthenticated]=useState(Boolean(getDeviceToken()));
   const[status,setStatus]=useState("all");
   const[fromDate,setFromDate]=useState("");
@@ -37,31 +39,46 @@ export function DataPage(){
   const[search,setSearch]=useState("");
   const[message,setMessage]=useState<string|null>(null);
   const[busy,setBusy]=useState(false);
+  const requestRef=useRef(0);
+  const controllerRef=useRef<AbortController|null>(null);
   const form=getForm(formKey);
 
   useEffect(()=>{if(routeFormKey)setFormKey(routeFormKey);},[routeFormKey]);
   useEffect(()=>{const onToken=()=>setAuthenticated(Boolean(getDeviceToken()));window.addEventListener("ecc-device-token",onToken);return()=>window.removeEventListener("ecc-device-token",onToken);},[]);
 
   async function load(){
+    controllerRef.current?.abort();
+    const controller=new AbortController();
+    controllerRef.current=controller;
+    const request=++requestRef.current;
     setBusy(true);setMessage(null);
     try{
       if(authenticated){
-        const [local,remote]=await Promise.all([form?.schedule==="derived"?Promise.resolve([] as LocalEntry[]):listLocalEntries(formKey),navigator.onLine?listRecords(formKey):Promise.resolve({records:[] as CanonicalRecord[]})]);
+        if(form?.schedule==="derived"){
+          const resolved=await listResolvedDerivedProjections(formKey,{online:navigator.onLine,signal:controller.signal});
+          if(request!==requestRef.current)return;
+          setProjections(resolved);setEntries([]);setCloudRecords([]);return;
+        }
+        const [local,remote]=await Promise.all([listLocalEntries(formKey),navigator.onLine?listRecords(formKey,undefined,controller.signal):Promise.resolve({records:[] as CanonicalRecord[]})]);
+        if(request!==requestRef.current)return;
         setEntries(local);
         setCloudRecords(remote.records);
       }else if(navigator.onLine){
-        const remote=await listPublicRecords(formKey);
+        const remote=await listPublicRecords(formKey,undefined,controller.signal);
+        if(request!==requestRef.current)return;
         setEntries([]);
         setCloudRecords(remote.records);
+        setProjections([]);
       }else{
         setEntries([]);
         setCloudRecords([]);
+        setProjections([]);
       }
-    }catch(error){setMessage(error instanceof Error?error.message:"Could not load entries.");}
-    finally{setBusy(false);}
+    }catch(error){if(error instanceof DOMException&&error.name==="AbortError")return;if(request===requestRef.current)setMessage(error instanceof Error?error.message:"Could not load entries.");}
+    finally{if(request===requestRef.current)setBusy(false);}
   }
 
-  useEffect(()=>{void load();const onChange=()=>void load();window.addEventListener("ecc-local-change",onChange);return()=>window.removeEventListener("ecc-local-change",onChange);},[formKey,authenticated]);
+  useEffect(()=>{void load();const onChange=()=>void load();window.addEventListener("ecc-local-change",onChange);return()=>{requestRef.current+=1;controllerRef.current?.abort();window.removeEventListener("ecc-local-change",onChange);};},[formKey,authenticated]);
 
   const mergedEntries=useMemo(()=>{
     const byId=new Map<string,LocalEntry>();
@@ -87,12 +104,20 @@ export function DataPage(){
     return(status==="all"||status==="completed")&&(!fromDate||record.date>=fromDate)&&(!toDate||record.date<=toDate)&&(!query||haystack.includes(query));
   }),[cloudRecords,status,fromDate,toDate,search]);
 
+  const filteredProjections=useMemo(()=>projections.filter(projection=>{
+    const record=projection.record;
+    if(!record)return false;
+    const projectionStatus=projection.status==="current"?"completed":"draft";
+    const query=search.trim().toLowerCase();
+    return(status==="all"||status===projectionStatus)&&(!fromDate||record.date>=fromDate)&&(!toDate||record.date<=toDate)&&(!query||"system".includes(query));
+  }),[projections,status,fromDate,toDate,search]);
+
   function clearFilters(){setStatus("all");setFromDate("");setToDate("");setSearch("");}
   const hasFilters=Boolean(status!=="all"||fromDate||toDate||search.trim());
-  const filteredCount=authenticated?filteredLocal.length:filteredCloud.length;
+  const isDerived=form?.schedule==="derived";
+  const filteredCount=isDerived?(authenticated?filteredProjections.length:filteredCloud.length):(authenticated?filteredLocal.length:filteredCloud.length);
 
   if(!form)return <div className="empty-state"><h1>Unknown form</h1></div>;
-  const isDerived=form.schedule==="derived";
   const offlineDerived=isDerived&&!navigator.onLine;
 
   return <div className="page-stack data-page">
@@ -112,12 +137,18 @@ export function DataPage(){
         </div>
       </section>
       <section className="card-surface entries-card">
-        <div className="entries-title"><div><h2>Past entries</h2><p>{isDerived?"Latest server-calculated projection per date · read-only":`${filteredCount} ${authenticated?`combined entr${filteredCount===1?"y":"ies"}`:`cloud completed entr${filteredCount===1?"y":"ies"}`} · newest first`}</p></div>{authenticated&&!isDerived&&<Link className="primary-button" to={`/forms/${form.key}/new`}>New/continue entry</Link>}</div>
-        {busy?<div className="loading-card plain">Loading entries…</div>:filteredCount===0?<div className="empty-state small"><h3>{offlineDerived?"Server-derived entries unavailable offline":`No ${authenticated?"combined":"cloud completed"} entries yet`}</h3><p>{offlineDerived?"Reconnect to view the current Form 5 or Form 6 projections.":`No ${authenticated?"local or cloud completed":"cloud completed"} entries match this view.`}</p>{hasFilters&&<button className="primary-button inline" type="button" onClick={clearFilters}>Reset filters</button>}</div>:<div className="entries-list">
-          {authenticated?filteredLocal.map(entry=><div className="entry-list-row" key={entry.entryId}>
+        <div className="entries-title"><div><h2>Past entries</h2><p>{isDerived?`${filteredCount} local-first projection${filteredCount===1?"":"s"} · read-only`:`${filteredCount} ${authenticated?`combined entr${filteredCount===1?"y":"ies"}`:`cloud completed entr${filteredCount===1?"y":"ies"}`} · newest first`}</p></div>{authenticated&&!isDerived&&<Link className="primary-button" to={`/forms/${form.key}/new`}>New/continue entry</Link>}</div>
+        {busy?<div className="loading-card plain">Loading entries…</div>:filteredCount===0?<div className="empty-state small"><h3>{offlineDerived?"No local projection sources yet":`No ${authenticated?"combined":"cloud completed"} entries yet`}</h3><p>{offlineDerived?"Complete the exact current and previous Form 8 dates to build a local projection.":`No ${authenticated?"local or cloud completed":"cloud completed"} entries match this view.`}</p>{hasFilters&&<button className="primary-button inline" type="button" onClick={clearFilters}>Reset filters</button>}</div>:<div className="entries-list">
+          {isDerived&&authenticated?filteredProjections.map(projection=>{const record=projection.record!;return <div className="entry-list-row" key={record.aggregateId}>
+            <div className="entry-primary" data-label="Date"><strong>{record.date}</strong><span>{projectionOriginLabel(projection.origin,projection.status)}</span></div>
+            <div className="entry-operator" data-label="Operator"><span>System</span></div>
+            <div className="entry-status" data-label="Status"><span className={`status-dot ${projection.status==="current"?"completed":"draft"}`}>{projection.status}</span></div>
+            <div className="entry-saved" data-label="Saved"><Bookmark size={16} aria-hidden="true"/><span>{formatTimestamp(record.updatedAt)}</span></div>
+            <div className="entry-actions" data-label="Actions"><Link className="secondary-button update-button" to={`/data/${record.formKey}/record/${encodeURIComponent(record.aggregateId)}`}>View</Link></div>
+          </div>;}):authenticated?filteredLocal.map(entry=><div className="entry-list-row" key={entry.entryId}>
             <div className="entry-primary" data-label="Date"><strong>{entry.context.date}</strong>{contextLabel(entry)&&<span>{contextLabel(entry)}</span>}</div>
             <div className="entry-operator" data-label="Operator"><span>{entry.operator||"Operator not selected"}</span></div>
-            <div className="entry-status" data-label="Status"><span className={`status-dot ${isDerived?"completed":entry.uploadError?"attention":entry.status}`}>{isDerived?"system-derived":entry.uploadError?"attention":entry.status}</span></div>
+            <div className="entry-status" data-label="Status"><span className={`status-dot ${entry.uploadError?"attention":entry.status}`}>{entry.uploadError?"attention":entry.status}</span></div>
             <div className="entry-saved" data-label="Saved"><Bookmark size={16} aria-hidden="true"/><span>{formatTimestamp(entry.updatedAt)}</span></div>
             <div className="entry-actions" data-label="Actions"><Link className="secondary-button update-button" to={`/data/${entry.formKey}/record/${encodeURIComponent(entry.entryId)}`}>View</Link>{!isDerived&&<Link className="secondary-button update-button" to={`/forms/${entry.formKey}/record/${encodeURIComponent(entry.entryId)}`}>Update</Link>}</div>
           </div>):filteredCloud.map(record=><div className="entry-list-row" key={record.aggregateId}>

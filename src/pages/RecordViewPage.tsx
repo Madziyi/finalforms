@@ -7,6 +7,7 @@ import { getDeviceToken } from "../lib/device";
 import { displayNumber } from "../lib/format";
 import { resolveForm2DailyTotals } from "../lib/form2DailyTotals";
 import { resolveForm8OatExtrema } from "../lib/form8OatExtrema";
+import { getDerivedProjectionDate, projectionOriginLabel, resolveDerivedProjection, type ResolvedDerivedProjection } from "../lib/derivedProjections";
 import { loadLocalEntry, localEntryToRecord } from "../lib/offlineDb";
 import type { CanonicalRecord, FieldValue } from "../types";
 const FORM8_OAT_EXTREME_KEYS = ["oat_high", "oat_low"] as const;
@@ -27,14 +28,33 @@ export function RecordViewPage() {
   const form = getForm(formKey);
   const [record, setRecord] = useState<CanonicalRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [projection, setProjection] = useState<ResolvedDerivedProjection | null>(null);
   const [form2Totals, setForm2Totals] = useState<Awaited<ReturnType<typeof resolveForm2DailyTotals>>>({ sourceDate: null, status: "hidden", values: {} });
   const [form8OatExtremes, setForm8OatExtremes] = useState<Awaited<ReturnType<typeof resolveForm8OatExtrema>>>({ sourceDate: "", status: "hidden", values: { oat_high: null, oat_low: null } });
   const fieldMap = useMemo(() => new Map(form ? allFields(form).map(field => [field.key, field]) : []), [form]);
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const id = decodeURIComponent(recordId);
+    setRecord(null);
+    setProjection(null);
+    setMessage(null);
     void (async () => {
       try {
+        if (form?.schedule === "derived") {
+          const date = getDerivedProjectionDate(formKey, id);
+          if (!date) throw new Error("This derived projection ID is invalid.");
+          const local = await resolveDerivedProjection(formKey, date, { online: false, signal: controller.signal });
+          if (local.record && !cancelled) { setProjection(local); setRecord(local.record); }
+          if (navigator.onLine) {
+            const remote = await resolveDerivedProjection(formKey, date, { signal: controller.signal });
+            if (!cancelled && (remote.record || !local.record)) { setProjection(remote); setRecord(remote.record); }
+            if (!remote.record && !local.record && !cancelled) setMessage("This projection has no exact source records yet.");
+          } else if (!local.record && !cancelled) {
+            setMessage("This projection is not available from exact local Form 8 sources while offline.");
+          }
+          return;
+        }
         const local = await loadLocalEntry(id);
         if (local && !cancelled) {
           setRecord(await localEntryToRecord(local));
@@ -45,20 +65,22 @@ export function RecordViewPage() {
           return;
         }
         if (getDeviceToken()) {
-          const result = await getRecord(id);
+          const result = await getRecord(id, controller.signal);
           if (!cancelled) setRecord(result.current);
         } else {
-          const result = await getPublicRecord(id);
+          const result = await getPublicRecord(id, controller.signal);
           if (!cancelled) setRecord(result.record);
         }
       } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
         if (!cancelled) setMessage(error instanceof Error ? error.message : "Could not load this record.");
       }
     })();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [recordId]);
+  }, [recordId, formKey, form?.schedule]);
   useEffect(() => {
     if (formKey !== "boiler-water-control-tests" || !record) return;
     let cancelled = false;
@@ -94,7 +116,7 @@ export function RecordViewPage() {
   const extraKeys = Object.keys(record.values).filter(key => !fieldMap.has(key) && !key.startsWith("_"));
   return <div className="page-stack record-view">
     <div className="form-page-header"><div><Link to={`/data/${form.key}`} className="back-link"><ArrowLeft size={17} /> Back to entries</Link><div className="eyebrow">Historical entry</div><h1>{form.name}</h1><p>{contextLabel(record)}</p></div></div>
-    {record.provenance?.source === "local-first" && <div className="notice">This entry is being viewed from this tablet’s local store.</div>}
+    {form.schedule === "derived" && projection && <div className={`notice ${projection.status === "current" ? "" : "warning"}`}>{projectionOriginLabel(projection.origin, projection.status)}{projection.warnings.length ? ` · ${projection.warnings.join(" ")}` : ""}</div>}
     {form.sections.map(section => {
       const isForm2OperatingSection = formKey === "boiler-water-control-tests" && section.key === "operating";
       const isForm8WeatherSection = formKey === "integrator-readings" && section.key === "weather";
