@@ -1,4 +1,4 @@
 DEVICE_TOKEN=replace-with-local-device-token
-GEMINI_API_KEY=replace-if-testing-form-9-ai
+OPENAI_API_KEY=replace-if-testing-form-9-ai
 POWER_AUTOMATE_BACKUP_URL=replace-with-flow-trigger-url
 POWER_AUTOMATE_BACKUP_KEY=replace-with-flow-shared-secret

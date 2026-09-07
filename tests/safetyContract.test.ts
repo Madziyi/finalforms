@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { normalizeContext, nextCalendarDate } from "../shared/safetyContract";
+import { normalizeContext, nextCalendarDate, shiftMeasuredAt } from "../shared/safetyContract";
+import { form2DailyTotalsSourceDate } from "../shared/form2DailyTotals";
 import { calculateForm5And6, calculateOhAlk } from "../shared/formulas";
 
 const form8Current = {
@@ -29,13 +30,29 @@ describe("context ownership contract", () => {
     expect(normalizeContext("boiler-water-control-tests", { date:"2026-09-03", shift:"Day", boilerNumber:2 })).toBe("2026-09-03|shift=Day|boiler=2");
     expect(() => normalizeContext("boiler-water-control-tests", { date:"2026-09-03", shift:"Day", boilerNumber:5 as never })).toThrow();
   });
-  it("normalizes time-slot forms by exact two-hour slot", () => {
-    expect(normalizeContext("yst-yk-chiller", { date:"2026-09-03", timeSlot:"08:00" })).toBe("2026-09-03|time=08:00");
-    expect(() => normalizeContext("yst-yk-chiller", { date:"2026-09-03", timeSlot:"09:00" })).toThrow();
+  it("accepts Extra as a distinct shift context", () => {
+    expect(normalizeContext("boiler-water-control-tests", { date:"2026-09-03", shift:"Extra", boilerNumber:2 })).toBe("2026-09-03|shift=Extra|boiler=2");
+    expect(shiftMeasuredAt("2026-09-03", "Extra")).toBe("2026-09-03T06:00:00");
+    expect(shiftMeasuredAt("2026-09-03", "Day")).toBe("2026-09-03T12:00:00");
+    expect(shiftMeasuredAt("2026-09-03", "Night")).toBe("2026-09-03T23:59:00");
+  });
+  it("normalizes time-slot forms by exact four-hour operator round", () => {
+    expect(normalizeContext("yst-yk-chiller", { date:"2026-09-03", timeSlot:"07:00" })).toBe("2026-09-03|time=07:00");
+    expect(() => normalizeContext("yst-yk-chiller", { date:"2026-09-03", timeSlot:"08:00" })).toThrow();
   });
   it("uses calendar dates rather than 24-hour arithmetic", () => {
     expect(nextCalendarDate("2026-03-08", -1)).toBe("2026-03-07");
     expect(nextCalendarDate("2026-12-31", 1)).toBe("2027-01-01");
+  });
+});
+
+describe("Form 2 daily-total handover", () => {
+  it("shows a Form 5 date on that date's Night shift and the following Day shift", () => {
+    expect(form2DailyTotalsSourceDate({ date:"2026-09-05", shift:"Night", boilerNumber:2 })).toBe("2026-09-05");
+    expect(form2DailyTotalsSourceDate({ date:"2026-09-06", shift:"Day", boilerNumber:4 })).toBe("2026-09-05");
+  });
+  it("does not show daily totals on Extra shifts", () => {
+    expect(form2DailyTotalsSourceDate({ date:"2026-09-06", shift:"Extra", boilerNumber:3 })).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ import { FormEntryPage } from "./pages/FormEntryPage";
 import { HomePage } from "./pages/HomePage";
 import { SystemPage } from "./pages/SystemPage";
 import { TrendPage } from "./pages/TrendPage";
+import { RecordViewPage } from "./pages/RecordViewPage";
 
 function CompatibilityGate(){
   const sync=useSyncExternalStore(subscribeSync,getSyncSnapshot,getSyncSnapshot);const location=useLocation();const[busy,setBusy]=useState(false);const[error,setError]=useState<string|null>(null);
@@ -22,5 +23,5 @@ function CompatibilityGate(){
   return onForm?<div className="safety-current-form-gate">{content}</div>:<div className="safety-gate">{content}</div>;
 }
 
-function RoutedApp(){return <><Routes><Route element={<AppShell/>}><Route index element={<HomePage/>}/><Route path="forms/:formKey/new" element={<FormEntryPage/>}/><Route path="forms/:formKey/record/:aggregateId" element={<FormEntryPage/>}/><Route path="forms/:formKey" element={<FormEntryPage/>}/><Route path="data" element={<DataPage/>}/><Route path="data/:formKey" element={<DataPage/>}/><Route path="trends/:formKey" element={<TrendPage/>}/><Route path="trends/:formKey/:fieldKey" element={<TrendPage/>}/><Route path="attention" element={<AttentionPage/>}/><Route path="exports" element={<ExportsPage/>}/><Route path="system" element={<SystemPage/>}/></Route></Routes><CompatibilityGate/><PwaUpdateNotice/></>}
+function RoutedApp(){return <><Routes><Route element={<AppShell/>}><Route index element={<HomePage/>}/><Route path="forms/:formKey/new" element={<FormEntryPage/>}/><Route path="forms/:formKey/record/:aggregateId" element={<FormEntryPage/>}/><Route path="forms/:formKey" element={<FormEntryPage/>}/><Route path="data" element={<DataPage/>}/><Route path="data/:formKey/record/:recordId" element={<RecordViewPage/>}/><Route path="data/:formKey" element={<DataPage/>}/><Route path="trends/:formKey" element={<TrendPage/>}/><Route path="trends/:formKey/:fieldKey" element={<TrendPage/>}/><Route path="attention" element={<AttentionPage/>}/><Route path="exports" element={<ExportsPage/>}/><Route path="system" element={<SystemPage/>}/></Route></Routes><CompatibilityGate/><PwaUpdateNotice/></>}
 export default function App(){return <BrowserRouter><RoutedApp/></BrowserRouter>}

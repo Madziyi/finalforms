@@ -1,4 +1,4 @@
-import type { CanonicalRecord, CommandPayload, CommandReceipt, CompletedRecordUpload, OperatorRecord } from "../../shared/types";
+import type { CanonicalRecord, CompletedRecordUpload, OperatorRecord, SyncReceipt } from "../../shared/types";
 import { getDeviceToken } from "./device";
 
 export class ApiError extends Error {
@@ -15,13 +15,23 @@ export function getMeta(){return request<{protocolVersion:number;schemaVersion:n
 export function listOperators(){return request<{operators:OperatorRecord[]}>("/api/operators");}
 export function createOperator(name:string){return request<{operator:OperatorRecord}>("/api/operators",{method:"POST",body:JSON.stringify({name})});}
 export function updateOperator(id:string,patch:{name?:string;active?:boolean}){return request<{operator:OperatorRecord}>(`/api/operators/${encodeURIComponent(id)}`,{method:"PATCH",body:JSON.stringify(patch)});}
-export function sendCommand(command:CommandPayload){return request<CommandReceipt>("/api/commands",{method:"POST",body:JSON.stringify(command)});}
-export function uploadCompleted(payload:CompletedRecordUpload){return request<{outcome:"accepted"|"duplicate"|"stale";record:CanonicalRecord}>("/api/completed",{method:"POST",body:JSON.stringify(payload)});}
+export function uploadCompleted(payload:CompletedRecordUpload){return request<SyncReceipt>("/api/completed",{method:"POST",body:JSON.stringify(payload)});}
 export function listRecords(formKey?:string,date?:string){const p=new URLSearchParams();if(formKey)p.set("formKey",formKey);if(date)p.set("date",date);return request<{records:CanonicalRecord[]}>(`/api/records?${p}`);}
+export function listPublicRecords(formKey:string,date?:string){const p=new URLSearchParams({formKey});if(date)p.set("date",date);return request<{records:CanonicalRecord[]}>(`/api/public/records?${p}`);}
+export function getPublicRecord(id:string){return request<{record:CanonicalRecord}>(`/api/public/records/${encodeURIComponent(id)}`);}
 export function getRecord(id:string){return request<{current:CanonicalRecord;published:CanonicalRecord|null}>(`/api/records/${encodeURIComponent(id)}`);}
 export function getRecordHistory(id:string){return request<{revisions:Array<CanonicalRecord & {operation:string;isPublished:boolean;revisionCreatedAt:string}>}>(`/api/records/${encodeURIComponent(id)}/history`);}
 export function getTrend(formKey:string,fieldKey:string,limit=5){const p=new URLSearchParams({formKey,fieldKey,limit:String(limit)});return request<{points:Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>}>(`/api/trend?${p}`);}
-export function getHistoryBatch(formKey:string){return request<{history:Record<string,Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>>}>(`/api/history-batch?formKey=${encodeURIComponent(formKey)}`);}
+export function getPublicTrend(formKey:string,fieldKey:string,limit=5){const p=new URLSearchParams({formKey,fieldKey,limit:String(limit)});return request<{points:Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>}>(`/api/public/trend?${p}`);}
+export async function getHistoryBatch(formKey:string){
+  const controller=new AbortController();
+  const timeout=window.setTimeout(()=>controller.abort(),20_000);
+  try{
+    return await request<{history:Record<string,Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>>}>(`/api/history-batch?formKey=${encodeURIComponent(formKey)}`,{signal:controller.signal});
+  }finally{
+    window.clearTimeout(timeout);
+  }
+}
 export function getAttention(){return request<{items:any[]}>("/api/attention");}
 export function getBackupStatus(date?:string){return request<{generations:any[]}>(`/api/backups/status${date?`?date=${encodeURIComponent(date)}`:""}`);}
 export function runBackup(plantDate:string){return request<{accepted:boolean;plantDate:string;workflowInstanceId:string;status:any}>("/api/backups/run",{method:"POST",body:JSON.stringify({plantDate})});}

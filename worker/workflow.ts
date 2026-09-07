@@ -25,7 +25,7 @@ export class BackupWorkflow extends WorkflowEntrypoint<Env, BackupWorkflowParams
         // This avoids inventing Form 5/6 rows on dates that contain only unrelated forms.
         const previousDate = nextCalendarDate(plantDate, -1);
         const relevant = await this.env.DB.prepare(`SELECT
-          EXISTS(SELECT 1 FROM latest_completed_records WHERE form_key='integrator-readings' AND plant_date IN (?,?)) AS has_integrator,
+          EXISTS(SELECT 1 FROM canonical_records WHERE form_key='integrator-readings' AND plant_date IN (?,?)) AS has_integrator,
           EXISTS(SELECT 1 FROM derived_projections WHERE plant_date=?) AS has_projection`).bind(plantDate, previousDate, plantDate).first<{has_integrator:number;has_projection:number}>();
         if (!Number(relevant?.has_integrator ?? 0) && !Number(relevant?.has_projection ?? 0)) return { skipped: true };
         return recomputeDerivedDate(this.env.DB, plantDate);

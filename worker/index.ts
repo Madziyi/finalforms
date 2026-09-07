@@ -1,14 +1,13 @@
 import { allFields, getForm } from "../shared/forms";
 import { buildAiCapturePrompt, normalizeAiCaptureResponse } from "./domain/aiCapture";
-import { APP_SCHEMA_VERSION, PROTOCOL_VERSION, nextCalendarDate } from "../shared/safetyContract";
+import { APP_SCHEMA_VERSION, PROTOCOL_VERSION, nextCalendarDate, shiftMeasuredAt } from "../shared/safetyContract";
 import type { CanonicalRecord, OperatorRecord, Values } from "../shared/types";
 import { backupStatus, previousTorontoDate } from "./domain/backup";
-import { processCommand } from "./domain/commands";
 import { recomputeDerivedDate } from "./domain/derivations";
 import { DomainError } from "./domain/validation";
 import { openAttention } from "./domain/db";
-import { getRevisionHistory } from "./domain/records";
 import { getLatestCompleted, listLatestCompleted, upsertCompletedRecord } from "./domain/localFirst";
+import { materializeExportValues, type ExportMaterializationSources } from "./domain/exportMaterialization";
 import type { Env } from "./env";
 export { BackupWorkflow } from "./workflow";
 
@@ -56,11 +55,45 @@ async function listRecords(db: D1Database, url: URL) {
   return listLatestCompleted(db, formKey ?? undefined, plantDate ?? undefined);
 }
 
+function projectionRecord(row: any): CanonicalRecord {
+  return {
+    aggregateId: row.projection_id,
+    formKey: row.form_key,
+    contextKey: row.plant_date,
+    revision: Number(row.revision),
+    publishedRevision: Number(row.revision),
+    lifecycle: row.status === "current" ? "completed" : "draft",
+    operatorId: null,
+    operator: "System",
+    date: row.plant_date,
+    shift: null,
+    timeSlot: null,
+    boilerNumber: null,
+    values: JSON.parse(row.effective_values_json),
+    provenance: { status: row.status, sourceRevisions: JSON.parse(row.source_revisions_json), warnings: JSON.parse(row.warnings_json) },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function listPublicRecords(db: D1Database, url: URL) {
+  const formKey = url.searchParams.get("formKey");
+  if (!formKey || !getForm(formKey)) throw new DomainError("unknown_form", "A valid formKey is required.");
+  return (await listRecords(db, url)).filter((record) => record.lifecycle === "completed");
+}
+
+async function getPublicRecord(db: D1Database, aggregateId: string) {
+  const projection = await db.prepare(`SELECT * FROM derived_projections WHERE projection_id=? AND status='current'`).bind(aggregateId).first<any>();
+  if (projection) return projectionRecord(projection);
+  const record = await getLatestCompleted(db, aggregateId);
+  return record?.lifecycle === "completed" ? record : null;
+}
+
 async function trend(db: D1Database, url: URL) {
   const formKey = url.searchParams.get("formKey");
   const fieldKey = url.searchParams.get("fieldKey");
   const before = url.searchParams.get("before");
-  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 5)));
+  const limit = Math.min(365, Math.max(1, Number(url.searchParams.get("limit") ?? 5)));
   if (!formKey || !fieldKey) throw new DomainError("trend_args", "formKey and fieldKey are required.");
   const form = getForm(formKey);
   if (!form) throw new DomainError("unknown_form", "Unknown form.");
@@ -76,7 +109,7 @@ async function trend(db: D1Database, url: URL) {
   return records
     .map((record) => {
       const value = record.values[fieldKey];
-      const measuredAt = record.timeSlot ? `${record.date}T${record.timeSlot}:00` : record.shift === "Day" ? `${record.date}T12:00:00` : `${record.date}T23:59:00`;
+      const measuredAt = record.timeSlot ? `${record.date}T${record.timeSlot}:00` : shiftMeasuredAt(record.date, record.shift as "Day" | "Night" | "Extra" | null);
       return { aggregate_id: record.aggregateId, plant_date: record.date, measured_at: measuredAt, numeric_value: value };
     })
     .filter((point) => typeof point.numeric_value === "number" && Number.isFinite(point.numeric_value) && (!before || point.measured_at < before))
@@ -92,24 +125,50 @@ async function exportCsv(db: D1Database, formKey: string) {
   const form = getForm(formKey); if (!form) throw new DomainError("unknown_form","Unknown form.");
   const url = new URL(`https://local/api/records?formKey=${encodeURIComponent(formKey)}`);
   const records = await listRecords(db,url) as CanonicalRecord[];
+  let sources: ExportMaterializationSources = { form9Oat: [], form5Projections: [] };
+  if (formKey === "gas-turbine-log-sheet" || formKey === "boiler-water-control-tests") {
+    // Export materialization is read-only. These source queries intentionally
+    // use the same shared contract as backup generation so display-only fields
+    // cannot diverge between CSV and SharePoint/Excel output.
+    const [oatResult, form5Result] = await db.batch([
+      db.prepare(`SELECT plant_date,time_slot,values_json FROM canonical_records WHERE form_key='gas-turbine-log-sheet' ORDER BY plant_date,time_slot,canonical_id`),
+      db.prepare(`SELECT plant_date,status,effective_values_json FROM derived_projections WHERE form_key='daily-consumption-totals' ORDER BY plant_date`),
+    ]);
+    sources = {
+      form9Oat: (oatResult.results ?? []).map((row: any) => ({
+        date: String(row.plant_date),
+        timeSlot: row.time_slot ?? null,
+        values: JSON.parse(row.values_json) as Values,
+        status: "completed",
+        lifecycle: "completed",
+      })),
+      form5Projections: (form5Result.results ?? []).map((row: any) => ({
+        plantDate: String(row.plant_date),
+        status: String(row.status),
+        values: JSON.parse(row.effective_values_json) as Values,
+      })),
+    };
+  }
   const fields = allFields(form).map((f)=>f.key);
   const headers = ["aggregateId","revision","date","timeSlot","shift","boilerNumber","operator","status",...fields];
   const lines = [headers.join(",")];
-  for (const r of records) lines.push(headers.map((h)=>csvEscape(h in r ? (r as any)[h] : r.values[h])).join(","));
+  for (const r of records) {
+    const values = materializeExportValues(formKey, r.date, r.shift, r.values, sources);
+    lines.push(headers.map((h)=>csvEscape(h in r ? (r as any)[h] : values[h])).join(","));
+  }
   return new Response(lines.join("\r\n"), { headers:{"Content-Type":"text/csv; charset=utf-8","Content-Disposition":`attachment; filename="${formKey}.csv"`} });
 }
 
 async function aiExtract(request: Request, env: Env) {
-  if (!env.GEMINI_API_KEY) throw new DomainError("ai_not_configured", "GEMINI_API_KEY is not configured.", 503);
+  if (!env.OPENAI_API_KEY) throw new DomainError("ai_not_configured", "OPENAI_API_KEY is not configured.", 503);
   const body = await readJson(request) as { imageBase64?:string; mimeType?:string };
   if (!body.imageBase64 || body.imageBase64.length > 9_000_000) throw new DomainError("image_invalid", "A compressed image under approximately 6 MB is required.");
   const prompt = buildAiCapturePrompt();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.GEMINI_MODEL || "gemini-2.5-flash")}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
-  const response = await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt},{inlineData:{mimeType:body.mimeType ?? "image/jpeg",data:body.imageBase64}}]}],generationConfig:{responseMimeType:"application/json",temperature:0}})});
+  const response = await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${env.OPENAI_API_KEY}`},body:JSON.stringify({model:env.OPENAI_MODEL||"gpt-5.6-luna",store:false,reasoning:{effort:"low"},input:[{role:"user",content:[{type:"input_text",text:prompt},{type:"input_image",image_url:`data:${body.mimeType ?? "image/jpeg"};base64,${body.imageBase64}`,detail:"high"}]}],text:{format:{type:"json_object"}}})});
   const raw:any = await response.json().catch(()=>null);
   if (!response.ok) throw new DomainError("ai_error", `Gemini returned HTTP ${response.status}.`, 502, raw);
-  const text = raw?.candidates?.[0]?.content?.parts?.map((p:any)=>p.text ?? "").join("") ?? "{}";
-  let parsed:any; try { parsed=JSON.parse(text); } catch { throw new DomainError("ai_parse", "Gemini did not return valid JSON.", 502); }
+  const text = raw?.output_text ?? raw?.output?.flatMap((item:any)=>item.content??[]).filter((part:any)=>part.type==="output_text").map((part:any)=>part.text??"").join("") ?? "{}";
+  let parsed:any; try { parsed=JSON.parse(text); } catch { throw new DomainError("ai_parse", "OpenAI did not return valid JSON.", 502); }
   return normalizeAiCaptureResponse(parsed);
 }
 
@@ -117,6 +176,14 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
   const url = new URL(request.url);
   if (request.method === "OPTIONS") return new Response(null,{status:204});
   if (url.pathname === "/api/meta" && request.method === "GET") return json({ protocolVersion:PROTOCOL_VERSION,schemaVersion:APP_SCHEMA_VERSION,serverTime:new Date().toISOString(),plantTimeZone:env.PLANT_TIME_ZONE,backupContractVersion:"ecc-backup-v2" });
+  if (url.pathname === "/api/public/records" && request.method === "GET") return json({records:await listPublicRecords(env.DB,url)});
+  const publicRecordMatch=url.pathname.match(/^\/api\/public\/records\/([^/]+)$/);
+  if(publicRecordMatch && request.method === "GET"){
+    const record=await getPublicRecord(env.DB,decodeURIComponent(publicRecordMatch[1]));
+    if(!record) throw new DomainError("record_missing","Record not found.",404);
+    return json({record});
+  }
+  if (url.pathname === "/api/public/trend" && request.method === "GET") return json({points:await trend(env.DB,url)});
   requireAuth(request,env);
 
   if (url.pathname === "/api/operators" && request.method === "GET") return json({operators:await listOperators(env.DB)});
@@ -130,41 +197,20 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
     const name=body.name===undefined?existing.name:String(body.name).trim(); const active=body.active===undefined?Number(existing.active):(body.active?1:0);
     await env.DB.prepare(`UPDATE operators SET name=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(name,active,id).run(); return json({operator:{id,name,active:Boolean(active),createdAt:existing.created_at,updatedAt:new Date().toISOString()}});
   }
-  if (url.pathname === "/api/commands" && request.method === "POST") {
-    const raw=await readJson(request); const receipt=await processCommand(env.DB,raw);
-    if ((receipt.outcome === "accepted" || receipt.outcome === "duplicate") && (raw as any).formKey === "integrator-readings" && receipt.publishedRevision === receipt.revision) {
-      // Command acceptance is the reliability boundary. Derivation is intentionally after-response work: the
-      // command transaction has already marked every affected projection stale and dirtied the backup dates.
-      // A derivation failure therefore cannot turn an accepted Form 8 submission into a client-visible failure.
-      const dates = receipt.derivedDates?.length ? receipt.derivedDates : [(raw as any).context.date];
-      ctx.waitUntil((async()=>{
-        for (const date of dates) {
-          try { await recomputeDerivedDate(env.DB,date); }
-          catch (error) {
-            console.error("Derived projection refresh failed", date, error);
-            await openAttention(env.DB,{plantDate:date,category:"derivation",code:"projection_refresh_failed",severity:"error",message:"Form 5/Form 6 recalculation failed after an accepted Form 8 revision. The source revision remains safe; retry derivation from System/backup workflow.",details:{error:String(error)}}).catch(()=>undefined);
-          }
-        }
-      })());
-    }
-    return json(receipt);
-  }
   if (url.pathname === "/api/completed" && request.method === "POST") {
     const payload=await readJson(request);
     const result=await upsertCompletedRecord(env.DB,payload);
-    if(result.outcome==="accepted" && result.record.formKey==="integrator-readings"){
-      const dates=new Set(result.affectedDates??[result.record.date,nextCalendarDate(result.record.date,1)]);
-      ctx.waitUntil((async()=>{for(const date of dates){try{await recomputeDerivedDate(env.DB,date);}catch(error){console.error("Local-first projection refresh failed",date,error);await openAttention(env.DB,{plantDate:date,category:"derivation",code:"projection_refresh_failed",severity:"error",message:"Form 5/Form 6 recalculation failed after a completed Form 8 upload.",details:{error:String(error)}}).catch(()=>undefined);}}})());
+    if(result.outcome==="accepted" && (result.record?.formKey==="integrator-readings" || result.record?.formKey==="gas-turbine-log-sheet")){
+      const dates=new Set<string>((result.affectedDates as string[]|undefined)??[result.record.date,nextCalendarDate(result.record.date,1)]);
+      ctx.waitUntil((async()=>{for(const date of dates){try{await recomputeDerivedDate(env.DB,date);}catch(error){console.error("Local-first projection refresh failed",date,error);await openAttention(env.DB,{plantDate:date,category:"derivation",code:"projection_refresh_failed",severity:"error",message:"Form 5/Form 6 recalculation failed after a completed Form 8 or Form 9 upload.",details:{error:String(error)}}).catch(()=>undefined);}}})());
     }
     return json(result);
   }
   if (url.pathname === "/api/records" && request.method === "GET") return json({records:await listRecords(env.DB,url)});
-  const recordHistoryMatch=url.pathname.match(/^\/api\/records\/([^/]+)\/history$/);
-  if(recordHistoryMatch && request.method === "GET"){const id=decodeURIComponent(recordHistoryMatch[1]);return json({revisions:await getRevisionHistory(env.DB,id)});}
   if (url.pathname.startsWith("/api/records/") && request.method === "GET") {
     const id=decodeURIComponent(url.pathname.split("/").pop()!);
     const projection=await env.DB.prepare(`SELECT * FROM derived_projections WHERE projection_id=?`).bind(id).first<any>();
-    if(projection) return json({current:{aggregateId:projection.projection_id,formKey:projection.form_key,revision:Number(projection.revision),publishedRevision:Number(projection.revision),lifecycle:projection.status==="current"?"completed":"draft",contextKey:projection.plant_date,operatorId:null,operator:"System",date:projection.plant_date,shift:null,timeSlot:null,boilerNumber:null,values:JSON.parse(projection.effective_values_json),provenance:{status:projection.status,sourceRevisions:JSON.parse(projection.source_revisions_json),warnings:JSON.parse(projection.warnings_json)},createdAt:projection.created_at,updatedAt:projection.updated_at},published:null});
+    if(projection) return json({current:projectionRecord(projection),published:null});
     const localCurrent=await getLatestCompleted(env.DB,id);if(localCurrent)return json({current:localCurrent,published:localCurrent});
     throw new DomainError("record_missing","Record not found.",404);
   }

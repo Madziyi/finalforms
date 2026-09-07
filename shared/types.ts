@@ -1,4 +1,5 @@
 export type FieldType = "number" | "text" | "select" | "duration" | "paired-number" | "computed";
+export type Shift = "Day" | "Night" | "Extra";
 export type TargetRange = { min?: number; max?: number; label: string };
 export type SelectOption = { label: string; value: string };
 export type FieldDefinition = {
@@ -12,6 +13,10 @@ export type FieldDefinition = {
   optional?: boolean;
   infrequent?: boolean;
   trendable?: boolean;
+  /** Whether this field participates in previous-measurement/history display. */
+  showHistory?: boolean;
+  /** Whether this field is shown in completed-record views. */
+  recordVisible?: boolean;
   defaultValue?: string | number;
   aiExtract?: boolean;
   calculated?: boolean;
@@ -38,12 +43,15 @@ export type FieldValue = ScalarValue | { first: number | null; second: number | 
 export type Values = Record<string, FieldValue>;
 export type Lifecycle = "draft" | "completed" | "superseded";
 export type OperationType = "create" | "save_draft" | "complete" | "amend_draft" | "amend_complete" | "move" | "replace" | "resolve_conflict" | "adjust_projection" | "resolve_projection";
-export type ContextInput = { date: string; shift?: "Day" | "Night" | null; timeSlot?: string | null; boilerNumber?: 2 | 3 | 4 | null };
+export type ContextInput = { date: string; shift?: Shift | null; timeSlot?: string | null; boilerNumber?: 2 | 3 | 4 | null };
 export type CanonicalRecord = {
   aggregateId: string;
   formKey: string;
   contextKey: string | null;
+  /** Server revision. It is independent from the tablet-local generation. */
   revision: number;
+  /** Monotonic tablet snapshot generation that produced this record. */
+  generation?: number;
   publishedRevision: number | null;
   lifecycle: Lifecycle;
   operatorId: string | null;
@@ -88,11 +96,29 @@ export type CommandReceipt = {
 };
 /** The v2 local-first upload contract. Drafts never use this contract. */
 export type CompletedRecordUpload = {
-  protocolVersion: 2;
+  protocolVersion: number;
   record: CanonicalRecord & { lifecycle: "completed" };
-  /** Monotonic tablet-local snapshot version for this aggregate/entry. */
-  localVersion: number;
+  /** Stable idempotency key for this exact queued snapshot. */
+  syncId?: string;
+  /** Monotonic tablet-local snapshot generation for this record. */
+  generation?: number;
+  /** Last server revision observed for this canonical ID. */
+  baseRevision?: number | null;
+  /** Legacy alias retained while older tablets drain their queue. */
+  localVersion?: number;
   clientUpdatedAt: string;
+  /** Set when a completed record moved to a new canonical ID. */
+  movedFromId?: string | null;
+};
+export type SyncReceipt = {
+  syncId: string;
+  aggregateId: string;
+  outcome: "accepted" | "duplicate" | "stale" | "conflict" | "collision" | "moved";
+  revision?: number;
+  record?: CanonicalRecord;
+  conflict?: CanonicalRecord;
+  movedToId?: string;
+  message?: string;
 };
 export type OperatorRecord = { id: string; name: string; active: boolean; createdAt: string; updatedAt: string };
 export type ProjectionStatus = "current" | "waiting" | "stale" | "attention" | "failed";

@@ -18,6 +18,18 @@ describe("backup/form manifest", () => {
   });
   it("defines OH-ALK as calculated and not operator-editable", () => {
     const form2 = FORMS.find((form) => form.number === 2)!;
+    const pRaw = allFields(form2).find((field) => field.key === "p_alk_burette")!;
+    const mRaw = allFields(form2).find((field) => field.key === "m_alk_burette")!;
+    expect(pRaw.label).toBe("P-ALK Burette Reading");
+    expect(mRaw.label).toBe("M-ALK Burette Reading");
+    expect(pRaw.trendable).toBe(false);
+    expect(pRaw.showHistory).toBe(false);
+    expect(pRaw.recordVisible).toBe(false);
+    expect(mRaw.trendable).toBe(false);
+    expect(mRaw.showHistory).toBe(false);
+    expect(mRaw.recordVisible).toBe(false);
+    expect(allFields(form2).find((field) => field.key === "p_alk")?.calculated).toBe(true);
+    expect(allFields(form2).find((field) => field.key === "m_alk")?.calculated).toBe(true);
     const oh = allFields(form2).find((field) => field.key === "oh_alk")!;
     expect(oh.calculated).toBe(true);
   });

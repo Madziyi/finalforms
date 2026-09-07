@@ -2,6 +2,7 @@ import { FORMS, allFields } from "../../shared/forms";
 import { nextCalendarDate } from "../../shared/safetyContract";
 import type { Values } from "../../shared/types";
 import { sha256Hex, stableStringify } from "./hash";
+import { materializeExportValues } from "./exportMaterialization";
 
 export const BACKUP_CONTRACT_VERSION = "ecc-backup-v2";
 const STANDARD_COLUMNS = [
@@ -10,7 +11,7 @@ const STANDARD_COLUMNS = [
 
 type EnvLike = { DB: D1Database; POWER_AUTOMATE_BACKUP_URL?: string; POWER_AUTOMATE_BACKUP_KEY?: string };
 type PublishedRow = {
-  revision_id:string; aggregate_id:string; revision:number; form_key:string; form_version:number; lifecycle:string; operator_id:string|null; operator_name:string; plant_date:string; shift:string|null; time_slot:string|null; boiler_number:number|null; values_json:string; provenance_json:string|null; created_at:string;
+  canonical_id:string; revision:number; form_key:string; form_version:number; lifecycle:string; operator_id:string|null; operator_name:string; plant_date:string; shift:string|null; time_slot:string|null; boiler_number:number|null; values_json:string; created_at:string;
 };
 type ProjectionRow = {
   projection_id:string; form_key:"daily-consumption-totals"|"makeup"; plant_date:string; revision:number; status:string; source_revisions_json:string; effective_values_json:string; warnings_json:string;
@@ -27,12 +28,11 @@ export function torontoDate(now = new Date()) {
 }
 export function previousTorontoDate(now = new Date()) { return nextCalendarDate(torontoDate(now), -1); }
 
-function flattenPublished(row: PublishedRow) {
-  const values = JSON.parse(row.values_json) as Values;
+function flattenPublished(row: PublishedRow, values = JSON.parse(row.values_json) as Values) {
   return {
     recordType: "published_revision",
-    aggregateId: row.aggregate_id,
-    revisionId: row.revision_id,
+    aggregateId: row.canonical_id,
+    revisionId: `${row.canonical_id}@r${row.revision}`,
     revision: Number(row.revision),
     date: row.plant_date,
     time: row.time_slot,
@@ -43,7 +43,7 @@ function flattenPublished(row: PublishedRow) {
     status: row.lifecycle,
     formVersion: Number(row.form_version),
     sourceRevisions: null,
-    manualAdjustments: row.provenance_json ? JSON.parse(row.provenance_json) : null,
+    manualAdjustments: null,
     warnings: null,
     ...values,
   };
@@ -76,17 +76,36 @@ export async function buildBackupGeneration(db: D1Database, plantDate: string): 
   if (existing?.status === "verified" && (!dirty || dirty.last_dirty_at <= existing.created_at)) return { ready: true, generation: existing };
   if (existing?.status === "not_ready" && (!dirty || dirty.last_dirty_at <= existing.created_at)) return { ready: false, reason: existing.last_error ?? "Backup generation is waiting for dependencies." };
 
-  // One D1 batch freezes latest completed records, projections, and the boundary
-  // from the same transactional snapshot. Legacy published revisions are not a
-  // normal backup source; migration 0003 backfills them into this table.
-  const [publishedResult, projectionResult, boundaryResult] = await db.batch([
-    db.prepare(`SELECT 'local-'||aggregate_id||'-'||local_revision AS revision_id,aggregate_id,local_revision AS revision,form_key,form_version,'completed' AS lifecycle,operator_id,operator_name,plant_date,shift,time_slot,boiler_number,values_json,NULL AS provenance_json,created_at FROM latest_completed_records WHERE plant_date=? ORDER BY form_key,time_slot,shift,boiler_number,aggregate_id`).bind(plantDate),
+  // One D1 batch freezes canonical records, projections, and the boundary from
+  // the same transactional snapshot.
+  const previousDate = nextCalendarDate(plantDate, -1);
+  const [publishedResult, projectionResult, sourceProjectionResult, boundaryResult] = await db.batch([
+    db.prepare(`SELECT canonical_id,revision,form_key,form_version,'completed' AS lifecycle,operator_id,operator_name,plant_date,shift,time_slot,boiler_number,values_json,created_at FROM canonical_records WHERE plant_date=? ORDER BY form_key,time_slot,shift,boiler_number,canonical_id`).bind(plantDate),
     db.prepare(`SELECT projection_id,form_key,plant_date,revision,status,source_revisions_json,effective_values_json,warnings_json FROM derived_projections WHERE plant_date=? ORDER BY form_key`).bind(plantDate),
+    // Form 2 Day rows on plantDate use the current Form 5 projection from the
+    // previous date. Read both dates in this batch so the frozen backup has a
+    // single D1 snapshot boundary for the row and its source projection.
+    db.prepare(`SELECT plant_date,status,effective_values_json FROM derived_projections WHERE form_key='daily-consumption-totals' AND plant_date IN (?,?) ORDER BY plant_date`).bind(plantDate, previousDate),
     db.prepare(`SELECT CURRENT_TIMESTAMP AS boundary`),
   ]);
   const snapshotBoundary = String((boundaryResult.results?.[0] as any)?.boundary ?? new Date().toISOString());
   const publishedRows = (publishedResult.results ?? []) as unknown as PublishedRow[];
   const projectionRows = (projectionResult.results ?? []) as unknown as ProjectionRow[];
+  const form5ProjectionSources = (sourceProjectionResult.results ?? []).map((row: any) => ({
+    plantDate: String(row.plant_date),
+    status: String(row.status),
+    values: JSON.parse(row.effective_values_json) as Values,
+  }));
+  const form9OatSources = publishedRows
+    .filter((row) => row.form_key === "gas-turbine-log-sheet")
+    .map((row) => ({
+      date: row.plant_date,
+      timeSlot: row.time_slot,
+      values: JSON.parse(row.values_json) as Values,
+      status: row.lifecycle,
+      lifecycle: row.lifecycle,
+    }));
+  const materializationSources = { form9Oat: form9OatSources, form5Projections: form5ProjectionSources };
   const generationId = crypto.randomUUID();
   const generationNumber = Number(existing?.generation_number ?? 0) + 1;
   const forms = [] as any[];
@@ -97,7 +116,15 @@ export async function buildBackupGeneration(db: D1Database, plantDate: string): 
       const projection = projectionRows.find((p)=>p.form_key===form.key);
       if (projection) entries = [flattenProjection(projection)];
     } else {
-      entries = publishedRows.filter((r)=>r.form_key===form.key).map(flattenPublished);
+      entries = publishedRows
+        .filter((r)=>r.form_key===form.key)
+        .map((row) => flattenPublished(row, materializeExportValues(
+          form.key,
+          row.plant_date,
+          row.shift,
+          JSON.parse(row.values_json) as Values,
+          materializationSources,
+        )));
     }
     forms.push({ formId: form.key, formName: form.name, formVersion: form.version, worksheetName: form.backupWorksheetName, standardColumns: STANDARD_COLUMNS, fieldKeys, entries });
   }
@@ -121,7 +148,7 @@ export async function buildBackupGeneration(db: D1Database, plantDate: string): 
       .bind(generationId, plantDate, generationNumber, snapshotBoundary, "ready", authoritativeJson, authoritativeHash, deliveryId),
     db.prepare(`INSERT INTO backup_deliveries(delivery_id,generation_id,status,request_hash) VALUES(?,?,?,?)`).bind(deliveryId, generationId, "pending", authoritativeHash),
   ];
-  for (const row of publishedRows) statements.push(db.prepare(`INSERT INTO backup_generation_items(generation_id,item_type,item_id,form_key,revision_number) VALUES(?,?,?,?,?)`).bind(generationId,"revision",row.revision_id,row.form_key,Number(row.revision)));
+  for (const row of publishedRows) statements.push(db.prepare(`INSERT INTO backup_generation_items(generation_id,item_type,item_id,form_key,revision_number) VALUES(?,?,?,?,?)`).bind(generationId,"record",row.canonical_id,row.form_key,Number(row.revision)));
   for (const row of projectionRows) statements.push(db.prepare(`INSERT INTO backup_generation_items(generation_id,item_type,item_id,form_key,revision_number) VALUES(?,?,?,?,?)`).bind(generationId,"projection",row.projection_id,row.form_key,Number(row.revision)));
   await db.batch(statements);
   return { ready: true, generation: { generation_id:generationId, plant_date:plantDate, generation_number:generationNumber, snapshot_boundary:snapshotBoundary, status:"ready", canonical_json:authoritativeJson, payload_hash:authoritativeHash, delivery_id:deliveryId, created_at:snapshotBoundary, workflow_instance_id:null, xlsxFileName, jsonFileName, receiptFileName } as any };

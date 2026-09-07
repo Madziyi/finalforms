@@ -7,9 +7,9 @@ export interface Env {
   APP_PROTOCOL_VERSION: string;
   APP_SCHEMA_VERSION: string;
   PLANT_TIME_ZONE: string;
-  GEMINI_MODEL: string;
+  OPENAI_MODEL: string;
   DEVICE_TOKEN?: string;
-  GEMINI_API_KEY?: string;
+  OPENAI_API_KEY?: string;
   POWER_AUTOMATE_BACKUP_URL?: string;
   POWER_AUTOMATE_BACKUP_KEY?: string;
 }

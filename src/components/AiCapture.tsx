@@ -1,5 +1,5 @@
 import { Camera, Check, ImagePlus, RefreshCcw, TriangleAlert, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { extractForm9 } from "../lib/api";
 import type { FieldDefinition, FieldValue } from "../types";
 
@@ -15,6 +15,7 @@ export function AiCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const guideRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [instructionOpen, setInstructionOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -66,6 +67,16 @@ export function AiCapture({
     } catch {
       fileRef.current?.click();
     }
+  }
+
+  function showCaptureInstructions() {
+    setError(null);
+    setInstructionOpen(true);
+  }
+
+  function acknowledgeCaptureInstructions() {
+    setInstructionOpen(false);
+    void openCamera();
   }
 
   function closeCamera() {
@@ -155,7 +166,7 @@ export function AiCapture({
           <h2>Capture the DCS screen first</h2>
           <p>Align the screen in the guide, capture it, then verify every extracted value before it is inserted into the form.</p>
         </div>
-        <button className="primary-button" onClick={openCamera} disabled={busy}><Camera size={18} /> {values ? "Scan again" : "Take screen photo"}</button>
+        <button className="primary-button" onClick={showCaptureInstructions} disabled={busy}><Camera size={18} /> {values ? "Scan again" : "Take screen photo"}</button>
       </div>
       <input
         ref={fileRef}
@@ -179,7 +190,7 @@ export function AiCapture({
           </div>
           {extractedCount === 0 && <div className="notice warning"><TriangleAlert size={18} /> No readable values were found. Retake the photo with the DCS labels and values in focus, or enter readings manually.</div>}
           {diagnostics !== null && <details className="ai-diagnostics"><summary>AI diagnostics</summary><p>Image pixels are not retained or shown here. This log contains Gemini's response and the values accepted by the app.</p><pre>{JSON.stringify(diagnostics, null, 2)}</pre></details>}
-          <div className="ai-grid">
+          <div className="ai-grid" style={{"--reading-rows": Math.ceil(aiFields.length / 2)} as CSSProperties}>
             {aiFields.map((field) => (
               <label key={field.key} className={check.includes(field.key) ? "ai-value-card needs-check" : "ai-value-card"}>
                 <span>{field.label}</span>
@@ -216,6 +227,25 @@ export function AiCapture({
             </div>
             <button className="camera-close" onClick={closeCamera}><X /></button>
             <button className="capture-button" onClick={capture} disabled={!cameraReady}><Camera size={24} /> {cameraReady ? "Capture" : "Starting camera…"}</button>
+          </div>
+        </div>
+      )}
+      {instructionOpen && (
+        <div className="capture-instruction-modal" role="dialog" aria-modal="true" aria-labelledby="capture-instruction-title">
+          <div className="capture-instruction-card">
+            <div className="capture-instruction-header">
+              <div>
+                <div className="eyebrow">Capture acknowledgement</div>
+                <h2 id="capture-instruction-title">How to capture the DCS screen</h2>
+                <p>Watch the demonstration, then acknowledge it to start the live capture screen.</p>
+              </div>
+              <button className="camera-close instruction-close" onClick={() => setInstructionOpen(false)} aria-label="Close capture demonstration"><X /></button>
+            </div>
+            <video className="capture-instruction-video" src="/demonstration.mp4" autoPlay loop muted playsInline preload="auto" />
+            <div className="capture-instruction-actions">
+              <button className="secondary-button" onClick={() => setInstructionOpen(false)}>Cancel</button>
+              <button className="primary-button" onClick={acknowledgeCaptureInstructions}><Camera size={18} /> I understand — open camera</button>
+            </div>
           </div>
         </div>
       )}

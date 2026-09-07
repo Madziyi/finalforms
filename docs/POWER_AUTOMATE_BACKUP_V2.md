@@ -4,6 +4,13 @@
 
 Power Automate is a **delivery adapter only**. It must not calculate Forms 2/5/6, choose plant dates, filter operational records, or own retry policy. Cloudflare/D1 freezes the exact snapshot, hash, generation and filenames. Power Automate stores those immutable bytes, creates Excel, writes a receipt **last**, and echoes the exact identity.
 
+`canonicalJson` is the authoritative export snapshot. It includes the published canonical records plus the current Form 5 and Form 6 derived projections. The Worker has already materialized any export-only display values before it sends the request:
+
+- Form 8 `OAT High` and `OAT Low` are the maximum/minimum completed same-date Form 9 `O.A.T. Memorial` readings.
+- Form 2 `Total Steam` and `Total Makeup` are supplied from the current Form 5 projection for all boilers: night shift uses the same plant date, day shift uses the prior plant date, and extra shift is blank.
+
+Those values are included in JSON and Excel so backups are readable and complete. They do **not** turn Form 2 or Form 8 display-only fields into operator-entered values, and Power Automate must not recompute, replace, or omit them.
+
 ### SharePoint
 
 Site: `FAC - Trades`
@@ -22,6 +29,22 @@ Template:
 ```text
 ECC_Operator_Daily_Backup_Template_v2.xlsx
 ```
+
+Use the generated workbook named above. It must contain these exact worksheet names (the Office Script validates this manifest):
+
+```text
+01 Cooling Tower
+02 Boiler Water
+03 YST-YK Chiller
+04 York Chiller
+05 Daily Consumption
+06 Makeup
+07 Pretreatment
+08 Integrator
+09 Gas Turbine
+```
+
+The script clears and rebuilds the contents of these sheets for each immutable generation; the template is a controlled shell, not a manually maintained report.
 
 Each generation produces:
 
@@ -268,7 +291,7 @@ triggerBody()?['payloadHash']
 triggerBody()?['generationId']
 ```
 
-The script validates contract/generation/worksheet manifest, clears and rebuilds exactly nine worksheets, preserves numeric zero vs blank, prevents formula injection for text, and returns a JSON success summary.
+The script validates contract/generation/worksheet manifest, clears and rebuilds exactly nine worksheets, preserves numeric zero vs blank, prevents formula injection for text, and returns a JSON success summary. Derived-projection rows and the Worker-materialized display values are ordinary snapshot fields at this stage: write what the payload contains.
 
 ## 10. Write receipt LAST
 
@@ -332,3 +355,4 @@ Use dynamic content tokens or fx for each value. Do not paste the `@{...}` strin
 4. Simulate lost HTTP response after receipt write → next Worker retry finds receipt and verifies.
 5. Historical D1 amendment → new generation number/files while old generation remains unchanged.
 6. Open XLSX → all nine worksheets present; blank remains blank and numeric 0 remains 0.
+7. Use a snapshot containing Form 8 OAT extrema and Form 2 day/night totals → those display-only values appear in both the JSON and relevant Excel rows; Form 2 extra-shift totals remain blank.
