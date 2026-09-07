@@ -67,7 +67,7 @@ export async function migrateV1LocalData() {
     for(const aggregate of old){
       if(await offlineDb.entries.get(aggregate.aggregateId))continue;
       const next=normalizedEntry(localEntryFromAggregate(aggregate),aggregate.updatedAt);
-      const collision=await contextCollision(next);
+      const collision=await contextCollision(next,aggregate.aggregateId);
       if(collision){if(collision.status==="completed")continue;await offlineDb.entries.delete(collision.entryId);}
       await offlineDb.entries.put(next);
     }
@@ -93,7 +93,7 @@ function normalizedEntry(entry:LocalEntry,updatedAt=new Date().toISOString()):Lo
 async function contextCollision(next:LocalEntry, sourceEntryId=next.entryId){
   if(!next.contextKey)return null;
   const matches=await (offlineDb.entries.where("[formKey+contextKey]") as any).equals([next.formKey,next.contextKey]).toArray() as LocalEntry[];
-  return matches.find((candidate)=>candidate.entryId!==next.entryId&&candidate.entryId!==sourceEntryId)??null;
+  return matches.find((candidate)=>candidate.entryId!==sourceEntryId)??null;
 }
 export class DuplicateContextError extends Error {
   constructor(public readonly collision:LocalEntry){super("This normalized context already has a local entry. Open it, replace it explicitly, or choose another context.");this.name="DuplicateContextError";}
@@ -105,7 +105,38 @@ export async function saveLocalEntry(entry:LocalEntry):Promise<LocalEntry>{const
 export async function loadLocalEntry(id:string){return offlineDb.entries.get(id);}
 export async function listLocalEntries(formKey?:string){return formKey?offlineDb.entries.where("formKey").equals(formKey).reverse().sortBy("updatedAt"):offlineDb.entries.orderBy("updatedAt").reverse().toArray();}
 export async function findLocalEntry(formKey:string,key:string){return (await offlineDb.entries.where("[formKey+contextKey]").equals([formKey,key]).first())??null;}
+export async function findLocalEntryExcluding(formKey:string,key:string,currentEntryId:string){
+  const matches=await offlineDb.entries.where("[formKey+contextKey]").equals([formKey,key]).toArray();
+  return matches.find(entry=>entry.entryId!==currentEntryId)??null;
+}
 export async function deleteLocalEntry(entryId:string){await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{await offlineDb.entries.delete(entryId);await offlineDb.completedSync.delete(entryId);});emit("entry-deleted",{entryId});}
+
+/**
+ * Discard a draft that selected an occupied context and adopt the selected
+ * local/cloud record in one transaction. Completed source records are never
+ * removed by this helper.
+ */
+export async function adoptExistingEntry(sourceEntryId:string,target:LocalEntry,discardSource:boolean){
+  const saved=normalizedEntry(target,target.updatedAt);
+  let result=saved;
+  await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{
+    const existing=await offlineDb.entries.get(saved.entryId);
+    if(existing){
+      if(entryVersion(existing)>entryVersion(saved))throw new Error("The existing local entry changed. Reopen the duplicate choice before continuing.");
+      result=existing;
+    }else{
+      const collision=await contextCollision(saved,sourceEntryId);
+      if(collision&&collision.entryId!==saved.entryId)throw new DuplicateContextError(collision);
+      await offlineDb.entries.put(saved);
+    }
+    if(discardSource&&sourceEntryId!==saved.entryId){
+      await offlineDb.entries.delete(sourceEntryId);
+      await offlineDb.completedSync.delete(sourceEntryId);
+    }
+  });
+  emit("entry-adopted",{entryId:result.entryId});
+  return result;
+}
 /** Replace an entry atomically. Used by the duplicate-context flow. */
 export async function replaceLocalEntry(sourceEntryId:string,next:LocalEntry,options:{queueCompleted?:boolean}={}){
   const saved=normalizedEntry(next);
@@ -132,6 +163,50 @@ export async function saveLocalAggregateAsEntry(aggregate:LocalAggregate){const 
 export async function discardTemporaryEdit(baseline:LocalEntry,minimumVersion=entryVersion(baseline)){const current=await offlineDb.entries.get(baseline.entryId);const restored={...baseline,temporaryEdit:false,localVersion:Math.max(entryVersion(baseline),entryVersion(current??baseline),minimumVersion)+1,uploadError:null};if(restored.status==="completed")return replaceLocalEntry(restored.entryId,restored,{queueCompleted:false});return saveLocalEntry(restored);}
 export async function localEntryToRecord(entry:LocalEntry):Promise<CanonicalRecord>{const contextKey=entry.contextKey??contextKeyFor(entry.formKey,entry.context)??entry.context.date;const version=Math.max(1,entryVersion(entry));return {aggregateId:entry.entryId,formKey:entry.formKey,contextKey,revision:version,generation:version,publishedRevision:entry.status==="completed"?version:null,lifecycle:entry.status,operatorId:entry.operatorId,operator:entry.operator,date:entry.context.date,shift:entry.context.shift??null,timeSlot:entry.context.timeSlot??null,boilerNumber:entry.context.boilerNumber??null,values:structuredClone(entry.values),createdAt:entry.createdAt,updatedAt:entry.updatedAt,provenance:{source:"canonical-sync",status:entry.status,localVersion:version,uploadError:entry.uploadError??null}};}
 async function putCompletedSync(entry:LocalEntry){const record=await localEntryToRecord(entry);const revision=Math.max(1,entryVersion(entry));const existing=await offlineDb.completedSync.get(entry.entryId);const existingVersion=existing?entryVersion({localVersion:existing.payload.localVersion}):-1;if(existing&&existingVersion>revision)return existing;const payload:CompletedRecordUpload={protocolVersion:3,syncId:existing&&existingVersion===revision?existing.payload.syncId:crypto.randomUUID(),record:record as CanonicalRecord & {lifecycle:"completed"},generation:revision,localVersion:revision,baseRevision:entry.baseRevision??null,clientUpdatedAt:entry.updatedAt,movedFromId:entry.movedFromId??null};const item:CompletedSyncItem={entryId:entry.entryId,payload,status:"pending",attempts:0,nextAttemptAt:null,lastError:null,updatedAt:new Date().toISOString()};await offlineDb.completedSync.put(item);return item;}
+export type CompleteLocalEntryOptions={
+  sourceEntryId?:string;
+  expectedSourceVersion?:number|null;
+  expectedTarget?:Pick<LocalEntry,"entryId"|"localVersion"|"contextKey">|null;
+};
+/** Atomically promote/replace a completed entry and create its upload outbox item. */
+export async function completeLocalEntry(entry:LocalEntry,options:CompleteLocalEntryOptions={}):Promise<LocalEntry>{
+  const saved=normalizedEntry({...entry,status:"completed",temporaryEdit:false,uploadError:null});
+  const sourceEntryId=options.sourceEntryId??entry.entryId;
+  const expected=options.expectedTarget??null;
+  assertCompletableEntry(saved);
+  await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{
+    const source=await offlineDb.entries.get(sourceEntryId);
+    if(source&&options.expectedSourceVersion!=null&&entryVersion(source)>options.expectedSourceVersion){
+      throw new Error("The entry changed on this tablet. Reload it before completing.");
+    }
+    if(expected){
+      if(expected.contextKey!==saved.contextKey)throw new Error("The selected replacement no longer owns this context. Cancel and choose Replace again.");
+      const target=await offlineDb.entries.get(expected.entryId);
+      if(target&&(entryVersion(target)!==entryVersion(expected)||target.contextKey!==expected.contextKey)){
+        throw new Error("The selected replacement changed on this tablet. Cancel and choose Replace again.");
+      }
+    }
+    const matches=await (offlineDb.entries.where("[formKey+contextKey]") as any).equals([saved.formKey,saved.contextKey]).toArray() as LocalEntry[];
+    for(const candidate of matches){
+      if(candidate.entryId===sourceEntryId)continue;
+      const isExpected=Boolean(expected&&candidate.entryId===expected.entryId&&entryVersion(candidate)===entryVersion(expected));
+      if(!isExpected)throw new DuplicateContextError(candidate);
+      if(entryVersion(saved)<=entryVersion(candidate))throw new Error("The replacement must be newer than the existing local entry.");
+    }
+    if(sourceEntryId!==saved.entryId){
+      await offlineDb.entries.delete(sourceEntryId);
+      await offlineDb.completedSync.delete(sourceEntryId);
+    }
+    if(expected&&expected.entryId!==saved.entryId&&expected.entryId!==sourceEntryId){
+      await offlineDb.entries.delete(expected.entryId);
+      await offlineDb.completedSync.delete(expected.entryId);
+    }
+    await offlineDb.entries.put(saved);
+    await putCompletedSync(saved);
+  });
+  emit("completed-queued",{entryId:saved.entryId,localVersion:saved.localVersion});
+  return saved;
+}
 export async function enqueueCompleted(entry:LocalEntry){if(entry.status!=="completed")throw new Error("Only completed entries can be uploaded.");if(entry.temporaryEdit)throw new Error("Temporary edits must be explicitly completed before upload.");let item:CompletedSyncItem|null=null;await offlineDb.transaction("rw",offlineDb.completedSync,offlineDb.entries,async()=>{const current=await offlineDb.entries.get(entry.entryId);if(current&&entryVersion(current)>entryVersion(entry)){item=await offlineDb.completedSync.get(entry.entryId)??null;return;}item=await putCompletedSync(entry);await offlineDb.entries.update(entry.entryId,{uploadError:null});});const queued=item as CompletedSyncItem|null;if(!queued)throw new Error("No completed upload was queued.");emit("completed-queued",{entryId:entry.entryId,localVersion:queued.payload.localVersion});return queued;}
 export async function pendingCompletedCount(){return offlineDb.completedSync.where("status").anyOf(["pending","uploading","retry"]).count();}
 export async function listCompletedSync(){return offlineDb.completedSync.where("status").anyOf(["pending","uploading","retry"]).toArray();}

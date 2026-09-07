@@ -4,7 +4,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AiCapture } from "../components/AiCapture";
 import { FormRenderer, type HistoryMap } from "../components/FormRenderer";
 import { allFields, getForm } from "../forms";
-import { getHistoryBatch, getRecord, listRecords } from "../lib/api";
+import { getHistoryBatch, getRecord } from "../lib/api";
+import { findOccupiedContext } from "../lib/contextOwner";
+import { beginTemporaryEdit, prepareTemporaryReplacement } from "../lib/entryWorkflow";
 import { todayPlantDate } from "../lib/format";
 import { resolveForm2DailyTotals } from "../lib/form2DailyTotals";
 import { FORM8_OAT_EXTREME_KEYS, resolveForm8OatExtrema } from "../lib/form8OatExtrema";
@@ -12,7 +14,7 @@ import { calculateForm5And6, calculateOhAlk } from "../../shared/formulas";
 import { deriveForm8OatExtrema } from "../../shared/form8Oat";
 import { nextCalendarDate, normalizeContext, SHIFT_OPTIONS, shiftMeasuredAt } from "../../shared/safetyContract";
 import { FORM2_DAILY_TOTAL_KEYS } from "../../shared/form2DailyTotals";
-import { discardTemporaryEdit, DuplicateContextError, enqueueCompleted, findLocalEntry, getOperators, listLocalEntries, loadLocalEntry, localEntryFromRecord, newLocalEntry, replaceLocalEntry, saveLocalEntry, type LocalEntry } from "../lib/offlineDb";
+import { adoptExistingEntry, completeLocalEntry, DuplicateContextError, getOperators, listLocalEntries, loadLocalEntry, localEntryFromRecord, newLocalEntry, saveLocalEntry, type LocalEntry } from "../lib/offlineDb";
 import { onUpdateCheckpointRequest, setEditActive } from "../lib/pwaUpdateCoordinator";
 import type { CanonicalRecord, FieldValue } from "../types";
 import { BOILERS, TIME_SLOTS } from "../types";
@@ -215,9 +217,9 @@ export function FormEntryPage() {
   const completeLockTimer = useRef<number | null>(null);
   const [duplicate, setDuplicate] = useState<LocalEntry | null>(null);
   const dismissedDuplicateContext = useRef<string | null>(null);
-  const [editBaseline, setEditBaseline] = useState<LocalEntry | null>(null);
   const editBaselineRef = useRef<LocalEntry | null>(null);
-  const finalizedEdit = useRef(false);
+  const replacementTargetRef = useRef<LocalEntry | null>(null);
+  const contextLookupSequence = useRef(0);
   const [availableDrafts, setAvailableDrafts] = useState<LocalEntry[] | null>(null);
   const [isNewEntry, setIsNewEntry] = useState(false);
   const [form2Totals, setForm2Totals] = useState<Awaited<ReturnType<typeof resolveForm2DailyTotals>>>({
@@ -252,9 +254,8 @@ export function FormEntryPage() {
     dismissedDuplicateContext.current = null;
     setCompletionBanner(null);
     setSavedAt(null);
-    setEditBaseline(null);
     editBaselineRef.current = null;
-    finalizedEdit.current = false;
+    replacementTargetRef.current = null;
     void (async () => {
       try {
         const plantDate = todayPlantDate();
@@ -297,15 +298,8 @@ export function FormEntryPage() {
     })();
     return () => {
       cancelled = true;
+      contextLookupSequence.current += 1;
       setEditActive(false);
-      const baseline = editBaselineRef.current;
-      const current = entryRef.current;
-      if (baseline && !finalizedEdit.current) void (async () => {
-        try {
-          await saveChain.current;
-          await discardTemporaryEdit(baseline, current?.localVersion);
-        } catch {/* Preserve the already durable baseline if cleanup cannot write. */}
-      })();
     };
   }, [aggregateId, formKey, form]);
   // Previous measurements are local-first too. The cloud history request can
@@ -367,7 +361,7 @@ export function FormEntryPage() {
     if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
   }, []);
   useEffect(() => {
-    if (aggregateId || !entry) return;
+    if (!entry) return;
     let key: string | null;
     try {
       key = normalizeContext(formKey, entry.context);
@@ -376,33 +370,31 @@ export function FormEntryPage() {
     }
     if (dismissedDuplicateContext.current && dismissedDuplicateContext.current !== key) dismissedDuplicateContext.current = null;
     if (dismissedDuplicateContext.current === key) return;
+    const selectedReplacement = replacementTargetRef.current;
+    if (selectedReplacement?.entryId === entry.entryId && selectedReplacement.contextKey === key) return;
     let active = true;
+    const sequence = ++contextLookupSequence.current;
+    const startingEntryId = entry.entryId;
     void (async () => {
-      let found = await findLocalEntry(formKey, key);
-      // A completed record may belong to another tablet and therefore not be
-      // in IndexedDB yet. Check the canonical store before allowing a second
-      // entry for the same normalized context.
-      if (!found && navigator.onLine) {
-        try {
-          const remote = await listRecords(formKey, entry.context.date);
-          const matching = remote.records.find(record => record.contextKey === key);
-          if (matching) found = localEntryFromRecord(matching);
-        } catch {
-          // The local guard still works offline; the Worker remains the
-          // authoritative final guard until it can be reached again.
-        }
+      let found:LocalEntry|null=null;
+      try {
+        found=await findOccupiedContext(formKey,key,entry.context.date,startingEntryId,navigator.onLine);
+      } catch {
+        // Drafts remain usable when the canonical owner lookup is unavailable.
+        // D1's unique constraint remains the authoritative final guard.
       }
       const current = entryRef.current;
       let currentKey: string | null = null;
       try {
         if (current) currentKey = normalizeContext(formKey, current.context);
       } catch {/* incomplete context cannot match */}
-      if (active && found && found.entryId !== entry.entryId && currentKey === key && dismissedDuplicateContext.current !== key) setDuplicate(found);
+      const isCurrent = active && sequence === contextLookupSequence.current && current?.entryId === startingEntryId && currentKey === key;
+      if (isCurrent && found && found.entryId !== startingEntryId && dismissedDuplicateContext.current !== key) setDuplicate(found);
     })();
     return () => {
       active = false;
     };
-  }, [entry?.context.date, entry?.context.shift, entry?.context.timeSlot, entry?.context.boilerNumber, aggregateId, formKey]);
+  }, [entry?.entryId, entry?.context.date, entry?.context.shift, entry?.context.timeSlot, entry?.context.boilerNumber, aggregateId, formKey]);
   if (!form) return <div className="empty-state"><h1>Unknown form</h1></div>;
   if (form.schedule === "derived") return <DerivedFormPage formKey={formKey} />;
   function queueSave(next: LocalEntry) {
@@ -455,6 +447,7 @@ export function FormEntryPage() {
     entryRef.current = next;
     setEntry(next);
     if (contextChanged) setMessage(null);
+    if (next.temporaryEdit) return;
     void queueSave(next);
   }
   function showToast(text: string) {
@@ -470,6 +463,7 @@ export function FormEntryPage() {
     const current = entryRef.current;
     if (!current) throw new Error("Entry is not ready.");
     if (current.storageError) throw new Error(current.storageError);
+    if (current.temporaryEdit) return current;
     return await queueSave(current);
   }
   function updateValue(key: string, value: FieldValue) {
@@ -524,11 +518,15 @@ export function FormEntryPage() {
         completedAt: new Date().toISOString(),
         uploadError: null
       };
-      const saved = await queueSave(completed);
-      await enqueueCompleted(saved);
-      finalizedEdit.current = true;
+      const baseline = editBaselineRef.current;
+      const target = replacementTargetRef.current;
+      const saved = await completeLocalEntry(completed, {
+        sourceEntryId: baseline?.entryId ?? current.entryId,
+        expectedSourceVersion: baseline?.localVersion ?? current.localVersion,
+        expectedTarget: target ? { entryId: target.entryId, localVersion: target.localVersion, contextKey: target.contextKey } : null
+      });
       editBaselineRef.current = null;
-      setEditBaseline(null);
+      replacementTargetRef.current = null;
       entryRef.current = saved;
       setEntry(saved);
       setCompletionBanner(navigator.onLine ? "Completed locally. Uploading in the background; you can continue working." : "Completed locally while offline. It will upload automatically when this tablet is online.");
@@ -538,7 +536,12 @@ export function FormEntryPage() {
         syncNow
       }) => syncNow());
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      if (error instanceof DuplicateContextError) {
+        setDuplicate(error.collision);
+        setMessage(null);
+      } else {
+        setMessage(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -546,23 +549,21 @@ export function FormEntryPage() {
   function openEdit() {
     const current = entryRef.current;
     if (!current) return;
-    const baseline = structuredClone(current);
-    editBaselineRef.current = baseline;
-    setEditBaseline(baseline);
-    finalizedEdit.current = false;
-    commit(e => ({
-      ...e,
-      temporaryEdit: true
-    }));
+    const edit = beginTemporaryEdit(current);
+    editBaselineRef.current = edit.baseline;
+    replacementTargetRef.current = null;
+    entryRef.current = edit.working;
+    setEntry(edit.working);
+    setCompletionBanner("Temporary changes are not saved until you press Complete.");
   }
   async function cancelEdit() {
     const baseline = editBaselineRef.current;
     if (!baseline) return;
     try {
       await saveChain.current;
-      const restored = await discardTemporaryEdit(baseline, entryRef.current?.localVersion);
+      const restored = await loadLocalEntry(baseline.entryId) ?? baseline;
       editBaselineRef.current = null;
-      setEditBaseline(null);
+      replacementTargetRef.current = null;
       entryRef.current = restored;
       setEntry(restored);
       setSavedAt(restored.updatedAt);
@@ -583,31 +584,43 @@ export function FormEntryPage() {
     }
   }
   async function replaceExisting() {
-    const current = entryRef.current;
-    if (!duplicate || !current) return;
-    await saveChain.current;
-    const baseline = structuredClone(duplicate);
-    const replacement = {
-      ...duplicate,
-      context: structuredClone(current.context),
-      operatorId: current.operatorId,
-      operator: current.operator,
-      values: structuredClone(current.values),
-      status: (duplicate.status === "completed" ? "completed" : "draft") as "completed" | "draft",
-      completedAt: duplicate.status === "completed" ? new Date().toISOString() : null,
-      localVersion: Math.max(current.localVersion, duplicate.localVersion) + 1,
-      temporaryEdit: duplicate.status === "completed",
-      uploadError: null
-    };
-    const saved = await replaceLocalEntry(current.entryId, replacement);
-    editBaselineRef.current = duplicate.status === "completed" ? baseline : null;
-    setEditBaseline(duplicate.status === "completed" ? baseline : null);
-    finalizedEdit.current = false;
-    setDuplicate(null);
-    entryRef.current = saved;
-    setEntry(saved);
-    setSavedAt(saved.updatedAt);
-    setCompletionBanner(saved.status === "completed" ? "Replacement completed locally. You can cancel to restore the original completed record." : null);
+    if (!duplicate || !entryRef.current) return;
+    setBusy(true);
+    try {
+      await saveChain.current;
+      const current = entryRef.current;
+      if (!current) return;
+      const replacement = prepareTemporaryReplacement(current,duplicate);
+      editBaselineRef.current = replacement.baseline;
+      replacementTargetRef.current = replacement.target;
+      setDuplicate(null);
+      entryRef.current = replacement.working;
+      setEntry(replacement.working);
+      setCompletionBanner("Replacement prepared. Temporary changes are not saved until you press Complete.");
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function openExisting() {
+    const target = duplicate;
+    if (!target || !entryRef.current) return;
+    setBusy(true);
+    try {
+      await saveChain.current;
+      const source = editBaselineRef.current ?? entryRef.current;
+      const adopted = await adoptExistingEntry(source.entryId, target, source.status === "draft");
+      editBaselineRef.current = null;
+      replacementTargetRef.current = null;
+      setDuplicate(null);
+      navigate(`/forms/${formKey}/record/${encodeURIComponent(adopted.entryId)}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   }
   function startFreshEntry() {
     const fresh = newLocalEntry(formKey, todayPlantDate());
@@ -623,14 +636,14 @@ export function FormEntryPage() {
   if (availableDrafts && form && (form.hasShift || form.hasTimeSlot || form.hasBoiler)) return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · local-first entry</div><h1>Resume or start a new entry</h1><p>Unfinished entries for plant date {todayPlantDate()} are available on this tablet.</p></div></div><section className="card-surface"><div className="entries-title"><div><h2>Available drafts</h2><p>Choose a draft to resume, or start with a fresh entry.</p></div></div><div className="draft-choice-list">{availableDrafts.map(draft => <Link className="draft-choice" key={draft.entryId} to={`/forms/${formKey}/record/${encodeURIComponent(draft.entryId)}`}><strong>{draft.operator || "Operator not selected"}</strong><span>{draftContextDetails(form, draft)} · saved {new Date(draft.updatedAt).toLocaleTimeString()}</span></Link>)}</div><button type="button" className="primary-button" onClick={startFreshEntry}>Start fresh entry</button></section></div>;
   if (!entry) return <div className="loading-card">Loading form…</div>;
   const locked = entry.status === "completed" && !entry.temporaryEdit;
-  const contextLocked = locked;
+  const contextLocked = locked || Boolean(replacementTargetRef.current);
   const missing = isNewEntry && !locked ? missingMetadata(form, entry) : [];
   const metadataLocked = missing.length > 0;
   return <div className="page-stack">{toast && <div className="toast-stack" aria-live="polite" aria-atomic="true"><div className="toast success" role="status"><span className="toast-icon"><Check size={18} /></span><span>{toast}</span><button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => {
     if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
     toastTimer.current = null;
     setToast(null);
-  }}><X size={17} /></button></div></div>}<div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · local-first entry</div><h1>{form.name}</h1><p>{form.description ?? "Values are saved to this tablet on every change. Only completed records upload."}</p></div></div>{!navigator.onLine && <div className="notice warning"><CloudOff size={18} /> Offline. This entry remains fully usable and will upload after completion when the tablet is online.</div>}{completionBanner && <div className="safety-status-banner" role="status" aria-live="polite"><Check size={18} /><div><strong>Completed locally</strong><span>{completionBanner}</span></div></div>}{entry.storageError && <div className="notice error"><CircleAlert size={18} /><div><strong>Local storage problem</strong><div>{entry.storageError}</div><small>Check browser storage permission and free space, then retry the field change. Complete is disabled until a durable save succeeds.</small></div></div>}{message && <div className={`notice ${message.toLowerCase().includes("error") || message.toLowerCase().includes("select") ? "error" : ""}`}><CircleAlert size={18} />{message}</div>}<section className="metadata-panel"><div className="metadata-field operator-field"><span>Operator</span><div className="operator-toggles">{operators.filter(o => o.active).map(o => <button type="button" disabled={contextLocked} key={o.id} className={`toggle-button ${entry.operatorId === o.id ? "selected" : ""}`} onClick={() => commit(e => ({
+  }}><X size={17} /></button></div></div>}<div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · local-first entry</div><h1>{form.name}</h1><p>{form.description ?? "Values are saved to this tablet on every change. Only completed records upload."}</p></div></div>{!navigator.onLine && <div className="notice warning"><CloudOff size={18} /> Offline. This entry remains fully usable and will upload after completion when this tablet is online.</div>}{completionBanner && <div className="safety-status-banner" role="status" aria-live="polite"><Check size={18} /><div><strong>{entry.temporaryEdit ? "Temporary edit" : "Completed locally"}</strong><span>{completionBanner}</span></div></div>}{entry.storageError && <div className="notice error"><CircleAlert size={18} /><div><strong>Local storage problem</strong><div>{entry.storageError}</div><small>Check browser storage permission and free space, then retry the field change. Complete is disabled until a durable save succeeds.</small></div></div>}{message && <div className={`notice ${message.toLowerCase().includes("error") || message.toLowerCase().includes("select") ? "error" : ""}`}><CircleAlert size={18} />{message}</div>}<section className="metadata-panel"><div className="metadata-field operator-field"><span>Operator</span><div className="operator-toggles">{operators.filter(o => o.active).map(o => <button type="button" disabled={contextLocked} key={o.id} className={`toggle-button ${entry.operatorId === o.id ? "selected" : ""}`} onClick={() => commit(e => ({
             ...e,
             operatorId: o.id,
             operator: o.name
@@ -658,7 +671,7 @@ export function FormEntryPage() {
               ...e.context,
               boilerNumber: b
             }
-          }))}>{b}</button>)}</div></div>}</section><div className={`entry-content-gate ${metadataLocked ? "is-locked" : ""}`}>{metadataLocked && <div className="entry-gate-notice" role="status" aria-live="polite">Complete the metadata above to begin entering this form. Still needed: {missing.join(", ")}.</div>}<div className="entry-content">{entry.status === "completed" && !entry.temporaryEdit && <div className="notice"><ShieldCheck size={18} /> This completed record can be edited as a temporary local edit. Cancel or navigate away to discard those changes. <button className="secondary-button inline" onClick={openEdit}><Pencil size={16} /> Edit completed form</button></div>}{entry.temporaryEdit && <div className="notice warning"><Pencil size={16} /> Temporary edit mode. Changes autosave locally; cancel or leave this page to discard them.</div>}{form.aiAssisted && aiFields.length > 0 && !locked && <AiCapture fields={aiFields} currentValues={entry.values} onVerified={vals => commit(e => ({
+        }))}>{b}</button>)}</div></div>}</section><div className={`entry-content-gate ${metadataLocked ? "is-locked" : ""}`}>{metadataLocked && <div className="entry-gate-notice" role="status" aria-live="polite">Complete the metadata above to begin entering this form. Still needed: {missing.join(", ")}.</div>}<div className="entry-content">{entry.status === "completed" && !entry.temporaryEdit && <div className="notice"><ShieldCheck size={18} /> This completed record can be edited temporarily. Changes are not saved until Complete; cancel, navigate away, or reload to discard them. <button className="secondary-button inline" onClick={openEdit}><Pencil size={16} /> Edit completed form</button></div>}{entry.temporaryEdit && <div className="notice warning"><Pencil size={16} /> Temporary edit mode. Changes are not saved until you press Complete; cancel, leave this page, or reload to discard them.</div>}{form.aiAssisted && aiFields.length > 0 && !locked && <AiCapture fields={aiFields} currentValues={entry.values} onVerified={vals => commit(e => ({
           ...e,
           values: {
             ...e.values,
@@ -667,12 +680,9 @@ export function FormEntryPage() {
         }))} />}<FormRenderer form={form} values={entry.values} history={history} disabled={locked} derivedValues={formKey === "integrator-readings" ? form8OatExtremes.values : form2Totals.values} pendingFieldKeys={form2Totals.status === "waiting" ? [...FORM2_DAILY_TOTAL_KEYS] : []} hiddenFieldKeys={formKey === "integrator-readings" ? (form8OatExtremes.status === "hidden" ? [...FORM8_OAT_EXTREME_KEYS] : []) : (form2Totals.status === "hidden" ? [...FORM2_DAILY_TOTAL_KEYS] : [])} onChange={updateValue} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="form-bottom-bar"><div><div style={{
               fontWeight: 700,
               color: entry.storageError ? "var(--error)" : "var(--success)"
-            }}>{entry.storageError ? "Not durably saved" : "Saved on this tablet"}</div><div className="history-empty">{savedAt ? new Date(savedAt).toLocaleTimeString() : "Autosave begins with the first change"} · {entry.status === "completed" ? "Completed locally" : "Draft"}</div></div><div className="form-bottom-actions">{entry.temporaryEdit && <button className="secondary-button" disabled={busy} onClick={() => void cancelEdit()}><X size={17} /> Cancel</button>}{!locked && <><button className="secondary-button" disabled={busy || Boolean(entry.storageError)} onClick={() => void submit("draft")}><Save size={17} /> Keep draft</button><button className="primary-button" disabled={busy || Boolean(entry.storageError) || completeLocked} onClick={() => void submit("complete")}><Check size={17} /> Complete</button></>}</div></div></div>{duplicate && <div className="confirmation-backdrop"><div className="confirmation-dialog"><div className="confirmation-heading"><CircleAlert /><div><h2>This context already has an entry</h2><p>{duplicate.formKey} · {duplicate.context.date}{duplicate.context.shift ? ` · ${duplicate.context.shift}` : ""}{duplicate.context.timeSlot ? ` · ${duplicate.context.timeSlot}` : ""}{duplicate.context.boilerNumber ? ` · ${duplicate.context.boilerNumber}` : ""}</p><p>Choose how to continue so this tablet keeps one local draft per normalized context.</p></div></div><div className="confirmation-actions"><button className="secondary-button" onClick={() => {
-              setDuplicate(null);
-              navigate(`/forms/${formKey}/record/${encodeURIComponent(duplicate.entryId)}`);
-            }}>Open existing</button><button className="primary-button" onClick={() => {
-              if (confirm("Replace the existing local entry with these values?")) void replaceExisting();
-            }}>Replace existing</button><button className="secondary-button" onClick={() => {
+            }}>{entry.storageError ? "Not durably saved" : entry.temporaryEdit ? "Temporary changes not saved" : "Saved on this tablet"}</div><div className="history-empty">{entry.temporaryEdit ? "Press Complete to save and queue this replacement" : `${savedAt ? new Date(savedAt).toLocaleTimeString() : "Autosave begins with the first change"} · ${entry.status === "completed" ? "Completed locally" : "Draft"}`}</div></div><div className="form-bottom-actions">{entry.temporaryEdit && <button className="secondary-button" disabled={busy} onClick={() => void cancelEdit()}><X size={17} /> Cancel</button>}{!locked && <><button className="secondary-button" disabled={busy || Boolean(entry.storageError) || entry.temporaryEdit} onClick={() => void submit("draft")}><Save size={17} /> Keep draft</button><button className="primary-button" disabled={busy || Boolean(entry.storageError) || completeLocked} onClick={() => void submit("complete")}><Check size={17} /> Complete</button></>}</div></div></div>{duplicate && <div className="confirmation-backdrop"><div className="confirmation-dialog"><div className="confirmation-heading"><CircleAlert /><div><h2>This context is already occupied</h2><p>{duplicate.formKey} · {duplicate.context.date}{duplicate.context.shift ? ` · ${duplicate.context.shift}` : ""}{duplicate.context.timeSlot ? ` · ${duplicate.context.timeSlot}` : ""}{duplicate.context.boilerNumber ? ` · ${duplicate.context.boilerNumber}` : ""}</p><p>{entry.status === "draft" ? "Open existing discards this draft attempt. " : ""}Replace keeps these values temporary until Complete; Cancel, navigation, or reload discards them.</p></div></div><div className="confirmation-actions"><button className="secondary-button" disabled={busy} onClick={() => void openExisting()}>Open existing</button><button className="primary-button" disabled={busy} onClick={() => {
+              if (confirm("Prepare a replacement using these values? The existing entry remains unchanged until you press Complete.")) void replaceExisting();
+            }}>Replace existing</button><button className="secondary-button" disabled={busy} onClick={() => {
               dismissedDuplicateContext.current = null;
               setDuplicate(null);
               setMessage(null);
