@@ -67,7 +67,7 @@ export async function migrateV1LocalData() {
     for(const aggregate of old){
       if(await offlineDb.entries.get(aggregate.aggregateId))continue;
       const next=normalizedEntry(localEntryFromAggregate(aggregate),aggregate.updatedAt);
-      const collision=await completedContextCollision(next);
+      const collision=await contextCollision(next);
       if(collision){if(collision.status==="completed")continue;await offlineDb.entries.delete(collision.entryId);}
       await offlineDb.entries.put(next);
     }
@@ -90,18 +90,18 @@ function normalizedEntry(entry:LocalEntry,updatedAt=new Date().toISOString()):Lo
   // move source needed by the Worker.
   return {...next,entryId:canonicalId,movedFromId:isCanonicalRecordId(next.formKey,next.entryId)&&next.baseRevision!=null?next.entryId:null};
 }
-async function completedContextCollision(next:LocalEntry){
+async function contextCollision(next:LocalEntry, sourceEntryId=next.entryId){
   if(!next.contextKey)return null;
   const matches=await (offlineDb.entries.where("[formKey+contextKey]") as any).equals([next.formKey,next.contextKey]).toArray() as LocalEntry[];
-  return matches.find((candidate)=>candidate.entryId!==next.entryId&&(candidate.status==="completed"||next.status==="completed"))??null;
+  return matches.find((candidate)=>candidate.entryId!==next.entryId&&candidate.entryId!==sourceEntryId)??null;
 }
 export class DuplicateContextError extends Error {
-  constructor(public readonly collision:LocalEntry){super("This normalized context already has a completed local entry. Open it, replace it explicitly, or choose another context.");this.name="DuplicateContextError";}
+  constructor(public readonly collision:LocalEntry){super("This normalized context already has a local entry. Open it, replace it explicitly, or choose another context.");this.name="DuplicateContextError";}
 }
 function assertCompletableEntry(next:LocalEntry){
   if(next.status==="completed"&&!next.contextKey)throw new Error("Completed entries require a complete normalized context.");
 }
-export async function saveLocalEntry(entry:LocalEntry):Promise<LocalEntry>{const next=normalizedEntry(entry);try{await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{const existing=await offlineDb.entries.get(next.entryId);if(existing&&entryVersion(existing)>next.localVersion)throw new Error("A newer local entry version already exists on this tablet.");assertCompletableEntry(next);const collision=await completedContextCollision(next);if(collision)throw new DuplicateContextError(collision);if(entry.entryId!==next.entryId){await offlineDb.entries.delete(entry.entryId);await offlineDb.completedSync.delete(entry.entryId);}await offlineDb.entries.put(next);});emit("entry-saved",{entryId:next.entryId,localVersion:next.localVersion});return next;}catch(error){if(error instanceof DuplicateContextError)throw error;const message=`Local storage save failed: ${error instanceof Error?error.message:String(error)}. Check free space, browser storage permission, and reload only after the entry is safe.`;try{await offlineDb.entries.update(entry.entryId,{storageError:message});}catch{/* the diagnostic itself may be unable to persist */}throw new Error(message);}}
+export async function saveLocalEntry(entry:LocalEntry):Promise<LocalEntry>{const next=normalizedEntry(entry);try{await offlineDb.transaction("rw",offlineDb.entries,offlineDb.completedSync,async()=>{const existing=await offlineDb.entries.get(next.entryId);if(existing&&entryVersion(existing)>next.localVersion)throw new Error("A newer local entry version already exists on this tablet.");assertCompletableEntry(next);const collision=await contextCollision(next,entry.entryId);if(collision)throw new DuplicateContextError(collision);if(entry.entryId!==next.entryId){await offlineDb.entries.delete(entry.entryId);await offlineDb.completedSync.delete(entry.entryId);}await offlineDb.entries.put(next);});emit("entry-saved",{entryId:next.entryId,localVersion:next.localVersion});return next;}catch(error){if(error instanceof DuplicateContextError)throw error;const message=`Local storage save failed: ${error instanceof Error?error.message:String(error)}. Check free space, browser storage permission, and reload only after the entry is safe.`;try{await offlineDb.entries.update(entry.entryId,{storageError:message});}catch{/* the diagnostic itself may be unable to persist */}throw new Error(message);}}
 export async function loadLocalEntry(id:string){return offlineDb.entries.get(id);}
 export async function listLocalEntries(formKey?:string){return formKey?offlineDb.entries.where("formKey").equals(formKey).reverse().sortBy("updatedAt"):offlineDb.entries.orderBy("updatedAt").reverse().toArray();}
 export async function findLocalEntry(formKey:string,key:string){return (await offlineDb.entries.where("[formKey+contextKey]").equals([formKey,key]).first())??null;}
@@ -136,7 +136,22 @@ export async function enqueueCompleted(entry:LocalEntry){if(entry.status!=="comp
 export async function pendingCompletedCount(){return offlineDb.completedSync.where("status").anyOf(["pending","uploading","retry"]).count();}
 export async function listCompletedSync(){return offlineDb.completedSync.where("status").anyOf(["pending","uploading","retry"]).toArray();}
 export async function markCompletedSending(entryId:string,localVersion:number){let claimed=false;const now=new Date().toISOString();await offlineDb.transaction("rw",offlineDb.completedSync,async()=>{const item=await offlineDb.completedSync.get(entryId);const eligibleStatus=item?.status==="pending"||item?.status==="retry";if(!item||!eligibleStatus||entryVersion({localVersion:item.payload.localVersion})!==localVersion||(item.nextAttemptAt!==null&&item.nextAttemptAt>now))return;await offlineDb.completedSync.update(entryId,{status:"uploading",attempts:item.attempts+1,updatedAt:now,lastError:null});claimed=true;});return claimed;}
+/** Reclaim an upload abandoned by a reload, tab crash, or a request that ignored abort. */
+export async function recoverStalledCompletedUploads(now=Date.now(),staleAfterMs=6_000){
+  const uploading=await offlineDb.completedSync.where("status").equals("uploading").toArray();
+  const stale=uploading.filter(item=>now-Date.parse(item.updatedAt)>=staleAfterMs);
+  if(!stale.length)return 0;
+  await offlineDb.transaction("rw",offlineDb.completedSync,offlineDb.entries,async()=>{for(const item of stale){
+    await offlineDb.completedSync.update(item.entryId,{status:"retry",nextAttemptAt:null,lastError:"Previous upload was interrupted; retrying.",updatedAt:new Date(now).toISOString()});
+    const entry=await offlineDb.entries.get(item.entryId);
+    if(entry&&entryVersion(entry)===entryVersion({localVersion:item.payload.localVersion}))await offlineDb.entries.update(item.entryId,{uploadError:"Previous upload was interrupted; retrying."});
+  }});
+  emit("completed-upload-recovered",{count:stale.length});
+  return stale.length;
+}
 export async function markCompletedRetry(entryId:string,localVersion:number,error:string){let changed=false;await offlineDb.transaction("rw",offlineDb.completedSync,offlineDb.entries,async()=>{const current=await offlineDb.completedSync.get(entryId);if(!current||current.status!=="uploading"||entryVersion({localVersion:current.payload.localVersion})!==localVersion)return;const seconds=Math.min(300,Math.max(2,2**Math.min(current.attempts,8)));const now=new Date().toISOString();await offlineDb.completedSync.update(entryId,{status:"retry",nextAttemptAt:new Date(Date.now()+seconds*1000).toISOString(),lastError:error,updatedAt:now});const entry=await offlineDb.entries.get(entryId);if(entry&&entryVersion(entry)===localVersion)await offlineDb.entries.update(entryId,{uploadError:error});changed=true;});if(changed)emit("completed-upload-failed",{entryId,error,localVersion});return changed;}
+/** Stop retrying a response that cannot succeed without an operator decision. */
+export async function markCompletedFailed(entryId:string,localVersion:number,error:string){let changed=false;await offlineDb.transaction("rw",offlineDb.completedSync,offlineDb.entries,async()=>{const current=await offlineDb.completedSync.get(entryId);if(!current||current.status!=="uploading"||entryVersion({localVersion:current.payload.localVersion})!==localVersion)return;const now=new Date().toISOString();await offlineDb.completedSync.update(entryId,{status:"failed",nextAttemptAt:null,lastError:error,updatedAt:now});const entry=await offlineDb.entries.get(entryId);if(entry&&entryVersion(entry)===localVersion)await offlineDb.entries.update(entryId,{uploadError:error});changed=true;});if(changed)emit("completed-upload-attention",{entryId,error,localVersion});return changed;}
 /**
  * Apply a completed-upload acknowledgement without allowing it to settle or
  * overwrite a newer queued snapshot.  A move queue item is also rebased when
@@ -186,7 +201,7 @@ export async function cacheServerEntries(records:CanonicalRecord[]){
     for(const record of records){
       if(!(await offlineDb.entries.get(record.aggregateId))){
         const next=normalizedEntry(localEntryFromRecord(record),record.updatedAt);
-        if(!(await completedContextCollision(next)))await offlineDb.entries.put(next);
+        if(!(await contextCollision(next)))await offlineDb.entries.put(next);
       }
       await offlineDb.serverCache.put({aggregateId:record.aggregateId,formKey:record.formKey,date:record.date,record,cachedAt:now});
     }

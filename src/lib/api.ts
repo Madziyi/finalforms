@@ -11,21 +11,27 @@ async function request<T>(path:string, init:RequestInit={}):Promise<T> {
   if(!response.ok){ const body:any=await response.json().catch(()=>({})); throw new ApiError(body?.error?.message??`HTTP ${response.status}`,response.status,body?.error?.code??"http_error",body?.error?.details); }
   return response.json() as Promise<T>;
 }
+async function timedRequest<T>(path:string, init:RequestInit, timeoutMs:number):Promise<T>{
+  const controller=new AbortController();
+  const timeout=window.setTimeout(()=>controller.abort(),timeoutMs);
+  try{return await request<T>(path,{...init,signal:controller.signal});}
+  finally{window.clearTimeout(timeout);}
+}
 export function getMeta(){return request<{protocolVersion:number;schemaVersion:number;serverTime:string;plantTimeZone:string;backupContractVersion:string}>("/api/meta");}
 export function listOperators(){return request<{operators:OperatorRecord[]}>("/api/operators");}
 export function createOperator(name:string){return request<{operator:OperatorRecord}>("/api/operators",{method:"POST",body:JSON.stringify({name})});}
 export function updateOperator(id:string,patch:{name?:string;active?:boolean}){return request<{operator:OperatorRecord}>(`/api/operators/${encodeURIComponent(id)}`,{method:"PATCH",body:JSON.stringify(patch)});}
-export function uploadCompleted(payload:CompletedRecordUpload){return request<SyncReceipt>("/api/completed",{method:"POST",body:JSON.stringify(payload)});}
+export function uploadCompleted(payload:CompletedRecordUpload){return timedRequest<SyncReceipt>("/api/completed",{method:"POST",body:JSON.stringify(payload)},5_000);}
 export function listRecords(formKey?:string,date?:string){const p=new URLSearchParams();if(formKey)p.set("formKey",formKey);if(date)p.set("date",date);return request<{records:CanonicalRecord[]}>(`/api/records?${p}`);}
 export function listPublicRecords(formKey:string,date?:string){const p=new URLSearchParams({formKey});if(date)p.set("date",date);return request<{records:CanonicalRecord[]}>(`/api/public/records?${p}`);}
 export function getPublicRecord(id:string){return request<{record:CanonicalRecord}>(`/api/public/records/${encodeURIComponent(id)}`);}
-export function getRecord(id:string){return request<{current:CanonicalRecord;published:CanonicalRecord|null}>(`/api/records/${encodeURIComponent(id)}`);}
+export function getRecord(id:string){return timedRequest<{current:CanonicalRecord;published:CanonicalRecord|null}>(`/api/records/${encodeURIComponent(id)}`,{},5_000);}
 export function getRecordHistory(id:string){return request<{revisions:Array<CanonicalRecord & {operation:string;isPublished:boolean;revisionCreatedAt:string}>}>(`/api/records/${encodeURIComponent(id)}/history`);}
 export function getTrend(formKey:string,fieldKey:string,limit=5){const p=new URLSearchParams({formKey,fieldKey,limit:String(limit)});return request<{points:Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>}>(`/api/trend?${p}`);}
 export function getPublicTrend(formKey:string,fieldKey:string,limit=5){const p=new URLSearchParams({formKey,fieldKey,limit:String(limit)});return request<{points:Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>}>(`/api/public/trend?${p}`);}
 export async function getHistoryBatch(formKey:string){
   const controller=new AbortController();
-  const timeout=window.setTimeout(()=>controller.abort(),20_000);
+  const timeout=window.setTimeout(()=>controller.abort(),5_000);
   try{
     return await request<{history:Record<string,Array<{aggregate_id:string;plant_date:string;measured_at:string;numeric_value:number}>>}>(`/api/history-batch?formKey=${encodeURIComponent(formKey)}`,{signal:controller.signal});
   }finally{

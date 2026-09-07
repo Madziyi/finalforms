@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AiCapture } from "../components/AiCapture";
 import { FormRenderer, type HistoryMap } from "../components/FormRenderer";
 import { allFields, getForm } from "../forms";
-import { getHistoryBatch, getRecord } from "../lib/api";
+import { getHistoryBatch, getRecord, listRecords } from "../lib/api";
 import { todayPlantDate } from "../lib/format";
 import { resolveForm2DailyTotals } from "../lib/form2DailyTotals";
 import { FORM8_OAT_EXTREME_KEYS, resolveForm8OatExtrema } from "../lib/form8OatExtrema";
@@ -88,7 +88,7 @@ function draftContextDetails(form: {
   return details.join(" · ");
 }
 function isDuplicateSelectionError(error: unknown): error is DuplicateContextError {
-  return error instanceof DuplicateContextError || error instanceof Error && error.message.includes("normalized context already has a completed local entry");
+  return error instanceof DuplicateContextError || error instanceof Error && error.message.includes("normalized context already has a local entry");
 }
 function validPlantDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -208,6 +208,7 @@ export function FormEntryPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [completionBanner, setCompletionBanner] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [completeLocked, setCompleteLocked] = useState(false);
@@ -229,6 +230,7 @@ export function FormEntryPage() {
     status: "hidden",
     values: {}
   });
+  const toastTimer = useRef<number | null>(null);
   const aiFields = useMemo(() => form ? allFields(form).filter(f => f.aiExtract) : [], [form]);
   useEffect(() => {
     void getOperators().then(setOperators);
@@ -362,6 +364,7 @@ export function FormEntryPage() {
   }, [entry?.context.date, formKey]);
   useEffect(() => () => {
     if (completeLockTimer.current != null) window.clearTimeout(completeLockTimer.current);
+    if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
   }, []);
   useEffect(() => {
     if (aggregateId || !entry) return;
@@ -374,14 +377,28 @@ export function FormEntryPage() {
     if (dismissedDuplicateContext.current && dismissedDuplicateContext.current !== key) dismissedDuplicateContext.current = null;
     if (dismissedDuplicateContext.current === key) return;
     let active = true;
-    void findLocalEntry(formKey, key).then(found => {
+    void (async () => {
+      let found = await findLocalEntry(formKey, key);
+      // A completed record may belong to another tablet and therefore not be
+      // in IndexedDB yet. Check the canonical store before allowing a second
+      // entry for the same normalized context.
+      if (!found && navigator.onLine) {
+        try {
+          const remote = await listRecords(formKey, entry.context.date);
+          const matching = remote.records.find(record => record.contextKey === key);
+          if (matching) found = localEntryFromRecord(matching);
+        } catch {
+          // The local guard still works offline; the Worker remains the
+          // authoritative final guard until it can be reached again.
+        }
+      }
       const current = entryRef.current;
       let currentKey: string | null = null;
       try {
         if (current) currentKey = normalizeContext(formKey, current.context);
       } catch {/* incomplete context cannot match */}
       if (active && found && found.entryId !== entry.entryId && currentKey === key && dismissedDuplicateContext.current !== key) setDuplicate(found);
-    });
+    })();
     return () => {
       active = false;
     };
@@ -440,6 +457,14 @@ export function FormEntryPage() {
     if (contextChanged) setMessage(null);
     void queueSave(next);
   }
+  function showToast(text: string) {
+    if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimer.current = null;
+    }, 3200);
+  }
   async function ensureSaved() {
     await saveChain.current;
     const current = entryRef.current;
@@ -486,6 +511,7 @@ export function FormEntryPage() {
       if (contextErrorMessage) throw new Error(contextErrorMessage);
       if (kind === "draft") {
         setMessage("Draft saved on this tablet. It will resume from this form and context.");
+        showToast("SAVED — draft saved on this tablet.");
         return;
       }
       const completed = {
@@ -507,6 +533,7 @@ export function FormEntryPage() {
       setEntry(saved);
       setCompletionBanner(navigator.onLine ? "Completed locally. Uploading in the background; you can continue working." : "Completed locally while offline. It will upload automatically when this tablet is online.");
       setMessage(null);
+      showToast("SUBMITTED — completed locally and queued for upload.");
       void import("../lib/sync").then(({
         syncNow
       }) => syncNow());
@@ -599,7 +626,11 @@ export function FormEntryPage() {
   const contextLocked = locked;
   const missing = isNewEntry && !locked ? missingMetadata(form, entry) : [];
   const metadataLocked = missing.length > 0;
-  return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · local-first entry</div><h1>{form.name}</h1><p>{form.description ?? "Values are saved to this tablet on every change. Only completed records upload."}</p></div></div>{!navigator.onLine && <div className="notice warning"><CloudOff size={18} /> Offline. This entry remains fully usable and will upload after completion when the tablet is online.</div>}{completionBanner && <div className="safety-status-banner" role="status" aria-live="polite"><Check size={18} /><div><strong>Completed locally</strong><span>{completionBanner}</span></div></div>}{entry.storageError && <div className="notice error"><CircleAlert size={18} /><div><strong>Local storage problem</strong><div>{entry.storageError}</div><small>Check browser storage permission and free space, then retry the field change. Complete is disabled until a durable save succeeds.</small></div></div>}{message && <div className={`notice ${message.toLowerCase().includes("error") || message.toLowerCase().includes("select") ? "error" : ""}`}><CircleAlert size={18} />{message}</div>}<section className="metadata-panel"><div className="metadata-field operator-field"><span>Operator</span><div className="operator-toggles">{operators.filter(o => o.active).map(o => <button type="button" disabled={contextLocked} key={o.id} className={`toggle-button ${entry.operatorId === o.id ? "selected" : ""}`} onClick={() => commit(e => ({
+  return <div className="page-stack">{toast && <div className="toast-stack" aria-live="polite" aria-atomic="true"><div className="toast success" role="status"><span className="toast-icon"><Check size={18} /></span><span>{toast}</span><button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => {
+    if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
+    toastTimer.current = null;
+    setToast(null);
+  }}><X size={17} /></button></div></div>}<div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · local-first entry</div><h1>{form.name}</h1><p>{form.description ?? "Values are saved to this tablet on every change. Only completed records upload."}</p></div></div>{!navigator.onLine && <div className="notice warning"><CloudOff size={18} /> Offline. This entry remains fully usable and will upload after completion when the tablet is online.</div>}{completionBanner && <div className="safety-status-banner" role="status" aria-live="polite"><Check size={18} /><div><strong>Completed locally</strong><span>{completionBanner}</span></div></div>}{entry.storageError && <div className="notice error"><CircleAlert size={18} /><div><strong>Local storage problem</strong><div>{entry.storageError}</div><small>Check browser storage permission and free space, then retry the field change. Complete is disabled until a durable save succeeds.</small></div></div>}{message && <div className={`notice ${message.toLowerCase().includes("error") || message.toLowerCase().includes("select") ? "error" : ""}`}><CircleAlert size={18} />{message}</div>}<section className="metadata-panel"><div className="metadata-field operator-field"><span>Operator</span><div className="operator-toggles">{operators.filter(o => o.active).map(o => <button type="button" disabled={contextLocked} key={o.id} className={`toggle-button ${entry.operatorId === o.id ? "selected" : ""}`} onClick={() => commit(e => ({
             ...e,
             operatorId: o.id,
             operator: o.name
