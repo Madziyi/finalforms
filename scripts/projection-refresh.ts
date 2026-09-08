@@ -162,11 +162,13 @@ function changed(existing: ProjectionRow | undefined, formKey: "daily-consumptio
 
 function buildPlan(target: TargetName, releaseSha: string, snapshot: ReturnType<typeof loadSnapshot>, fromDate?: string) {
   const existingByKey = new Map(snapshot.projections.map((row) => [`${row.form_key}|${row.plant_date}`, row]));
-  const baseDates = [...new Set([
-    ...snapshot.form8.map((row) => row.plant_date),
+  const sourceBaseDates = [...new Set(snapshot.form8.map((row) => row.plant_date))]
+    .filter((date) => !fromDate || date >= fromDate)
+    .sort();
+  const dates = [...new Set([
     ...snapshot.projections.map((row) => row.plant_date),
+    ...projectionRefreshDatesFromRows(sourceBaseDates, snapshot.form8),
   ])].filter((date) => !fromDate || date >= fromDate).sort();
-  const dates = projectionRefreshDatesFromRows(baseDates, snapshot.form8).filter((date) => !fromDate || date >= fromDate);
   const projections = dates.flatMap((plantDate) => {
     const calculation = calculateDerivedProjections(plantDate, snapshot.form8, snapshot.form9.filter((row) => row.plant_date === plantDate));
     return ([
