@@ -69,18 +69,28 @@ describe("server formulas", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
-  it("does not report a partial Boiler 4 steam total when the exact previous reading is missing", () => {
+  it("does not suppress available steam when Boiler 4 has an incomplete pair", () => {
     const result = calculateForm5And6({
       currentDate: "2026-09-07", previousDate: "2026-09-06", hasCurrent: true, hasPrevious: true,
       currentValues: { steam_boiler2: 1000, steam_boiler4: 368519000, hotwell_makeup: 12000 },
       previousValues: { steam_boiler4: null, hotwell_makeup: 11000 },
     });
     expect(result.form5.boiler4_steam_used).toBeNull();
-    expect(result.form5.total_steam).toBeNull();
-    expect(result.form5.average_flow_hr).toBeNull();
-    expect(result.form5.makeup_percent).toBeNull();
+    expect(result.form5.total_steam).toBe(1000);
+    expect(result.form5.average_flow_hr).toBe(1000 / 24);
+    expect(result.form5.makeup_percent).toBe(1000);
     expect(result.form5.makeup_water_gallon).toBe(1000);
     expect(result.warnings).toContain("Boiler 4 steam: previous exact-date reading is missing on 2026-09-06.");
+  });
+
+  it("allows total steam to use only Boiler 2 when optional boilers are absent", () => {
+    const result = calculateForm5And6({
+      currentDate: "2026-09-07", previousDate: "2026-09-06", hasCurrent: true, hasPrevious: true,
+      currentValues: { steam_boiler2: 1000, steam_boiler3: null, steam_boiler4: null },
+      previousValues: { steam_boiler3: null, steam_boiler4: null },
+    });
+    expect(result.form5.total_steam).toBe(1000);
+    expect(result.warnings).toEqual([]);
   });
 
   it("treats Boiler 3/4 blank on both exact dates as absent, but preserves a negative complete delta", () => {

@@ -65,8 +65,10 @@ export function calculateForm5And6(input: {
   const b4Steam = completeDelta(number(currentValues,"steam_boiler4"), number(previousValues,"steam_boiler4"), "Boiler 4 steam", currentDate, previousDate, warnings);
   const makeup = delta(number(currentValues,"hotwell_makeup"), number(previousValues,"hotwell_makeup"), "Hotwell makeup", warnings);
   const b2Steam = number(currentValues,"steam_boiler2");
-  const steamDeltasComplete = b3Steam.state !== "incomplete" && b4Steam.state !== "incomplete";
-  const totalSteam = dependencyStatus === "current" && steamDeltasComplete ? sumAvailable([b2Steam,b3Steam.value,b4Steam.value]) : null;
+  const steamContributions = [b3Steam, b4Steam]
+    .filter((boiler): boiler is DeltaResult & { state: "absent" | "complete" } => boiler.state !== "incomplete")
+    .map((boiler) => boiler.value);
+  const totalSteam = dependencyStatus === "current" ? sumAvailable([b2Steam, ...steamContributions]) : null;
 
   const form5: Values = {
     oat_high: number(currentValues,"oat_high"),
