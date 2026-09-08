@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ecc-operator-pwa-v1-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-03",
+  "observability": { "enabled": true },
+  "vars": {
+    "APP_PROTOCOL_VERSION": "3",
+    "APP_SCHEMA_VERSION": "3",
+    "PLANT_TIME_ZONE": "America/Toronto",
+    "OPENAI_MODEL": "gpt-5.6-luna"
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ecc-operator-v1-staging",
+      "database_id": "92706a75-55f0-4050-a9e0-3ddbaef19ec0"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "ecc-backup-staging",
+      "binding": "BACKUP_WORKFLOW",
+      "class_name": "BackupWorkflow"
+    }
+  ]
+}
