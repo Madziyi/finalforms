@@ -216,7 +216,9 @@ function buildPlan(target: TargetName, releaseSha: string, snapshot: ReturnType<
 }
 
 function buildApplySql(plan: ReturnType<typeof buildPlan>, appliedAt: string) {
-  const statements = ["BEGIN TRANSACTION;"];
+  // Wrangler's remote D1 file execution supplies the batch boundary; explicit
+  // BEGIN/COMMIT statements are rejected by the D1 API.
+  const statements: string[] = [];
   const trendable = new Map(plan.projections.map((projection) => [projection.formKey, new Set(allFields(getForm(projection.formKey)!).filter((field) => field.trendable).map((field) => field.key))]));
   for (const projection of plan.projections.filter((candidate) => candidate.changed)) {
     const valuesJson = stableStringify(projection.values);
@@ -234,7 +236,6 @@ function buildApplySql(plan: ReturnType<typeof buildPlan>, appliedAt: string) {
     }
     statements.push(`INSERT INTO backup_dirty_dates(plant_date,reason,first_dirty_at,last_dirty_at) VALUES(${sql(projection.plantDate)},${sql(`Historical ${projection.formKey} projection refresh`)},${sql(appliedAt)},${sql(appliedAt)}) ON CONFLICT(plant_date) DO UPDATE SET reason=excluded.reason,last_dirty_at=excluded.last_dirty_at;`);
   }
-  statements.push("COMMIT;");
   return statements.join("\n") + "\n";
 }
 
