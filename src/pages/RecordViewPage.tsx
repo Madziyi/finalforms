@@ -130,7 +130,7 @@ export function RecordViewPage() {
           "--reading-rows": Math.ceil(fields.length / 2)
         } as CSSProperties}>{fields.map(field => {
             const isDerivedTotal = ["steam_total", "makeup_total"].includes(field.key);
-            const isDerivedOat = FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number]);
+            const isDerivedOat = isForm8WeatherSection && FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number]);
             const value = isDerivedTotal ? form2Totals.values[field.key] : isDerivedOat ? form8OatExtremes.values[field.key] : displayValues[field.key];
             const display = valueLabel(value);
             return <div className="detail-value" key={field.key}><span>{field.label}</span><div><strong>{isDerivedTotal && form2Totals.status === "waiting" ? "Waiting for daily totals" : `${display}${field.unit ? ` ${field.unit}` : ""}`}</strong>{field.trendable && typeof value === "number" && <Link to={`/trends/${form.key}/${field.key}`}><LineChart size={16} /> Trend</Link>}</div></div>;
