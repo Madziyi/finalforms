@@ -107,7 +107,7 @@ describe("client Form 5/6 local-first projections", () => {
       online: true,
       localForm8: local,
       localForm9: [],
-      fetchSources: async (_formKey, date) => remote.filter(record => record.date === date),
+      fetchSources: async (_formKey, date) => date ? remote.filter(record => record.date === date) : remote,
     });
     expect(result.status).toBe("current");
     expect(result.origin).toBe("hybrid");
@@ -159,18 +159,34 @@ describe("client Form 5/6 local-first projections", () => {
     expect(result.record?.values.cw_makeup_current).toBe(8);
   });
 
-  it("requires the exact previous calendar date and never substitutes an older record", async () => {
+  it("uses the most recent earlier Form 8 record instead of requiring yesterday", async () => {
     const localCurrent = localEntry("integrator-readings", currentDate, values({ cw_makeup: 700 }));
     const oldCloud = cloudRecord("integrator-readings", "2026-09-04", values({ cw_makeup: 400 }));
     const result = await resolveDerivedProjection("makeup", currentDate, {
       online: true,
       localForm8: [localCurrent],
       localForm9: [],
-      fetchSources: async (_formKey, date) => date === "2026-09-04" ? [oldCloud] : [],
+      fetchSources: async (_formKey, date) => date === undefined ? [oldCloud] : [],
     });
-    expect(result.status).toBe("waiting");
-    expect(result.record?.values.cw_makeup_used).toBeNull();
-    expect(result.warnings).toContain(`Waiting for completed Form 8 on previous calendar date ${previousDate}.`);
+    expect(result.status).toBe("current");
+    expect(result.record?.values.cw_makeup_used).toBe(300);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("selects the latest earlier measurement independently for Boiler 3 and Boiler 4", async () => {
+    const localCurrent = localEntry("integrator-readings", currentDate, values({ steam_boiler3: 2100, steam_boiler4: 4100 }));
+    const localPrior = localEntry("integrator-readings", "2026-09-05", values({ steam_boiler3: 2000, steam_boiler4: null }));
+    const olderCloud = cloudRecord("integrator-readings", "2026-09-04", values({ steam_boiler4: 3000 }));
+    const result = await resolveDerivedProjection("daily-consumption-totals", currentDate, {
+      online: true,
+      localForm8: [localCurrent, localPrior],
+      localForm9: [],
+      fetchSources: async (_formKey, date) => date === undefined ? [olderCloud] : [],
+    });
+    expect(result.status).toBe("current");
+    expect(result.record?.values.boiler3_steam_used).toBe(100);
+    expect(result.record?.values.boiler4_steam_used).toBe(1100);
+    expect(result.record?.values.total_steam).toBe(2200);
   });
 
   it("does not replace a local override with a stale cloud projection when an exact dependency is unavailable", async () => {

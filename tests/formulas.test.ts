@@ -42,7 +42,7 @@ describe("server formulas", () => {
     expect(result.form6.tower_makeup_current).toBe(9000);
   });
 
-  it("does not substitute a missing previous calendar date", () => {
+  it("waits when there is no previous measurement", () => {
     const result = calculateForm5And6({
       currentDate: "2026-09-03",
       previousDate: "2026-09-02",
@@ -54,7 +54,7 @@ describe("server formulas", () => {
     expect(result.status).toBe("waiting");
     expect(result.form5.boiler3_gas_used).toBeNull();
     expect(result.form6.cw_makeup_used).toBeNull();
-    expect(result.warnings.join(" ")).toContain("2026-09-02");
+    expect(result.warnings.join(" ")).toContain("previous Form 8 measurement before 2026-09-03");
   });
 
   it("retains negative cumulative deltas and adds a warning", () => {
@@ -80,7 +80,7 @@ describe("server formulas", () => {
     expect(result.form5.average_flow_hr).toBe(1000 / 24);
     expect(result.form5.makeup_percent).toBe(1000);
     expect(result.form5.makeup_water_gallon).toBe(1000);
-    expect(result.warnings).toContain("Boiler 4 steam: previous exact-date reading is missing on 2026-09-06.");
+    expect(result.warnings).toContain("Boiler 4 steam: no previous measurement exists before 2026-09-07.");
   });
 
   it("allows total steam to use only Boiler 2 when optional boilers are absent", () => {

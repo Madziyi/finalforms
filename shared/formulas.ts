@@ -23,19 +23,21 @@ function sumAvailable(values: Array<number | null>) {
 }
 
 type DeltaResult = { value: number | null; state: "absent" | "complete" | "incomplete" };
+export type PreviousMeasurement = { value: number; date: string };
+type PreviousMeasurementMap = Partial<Record<"gas_boiler3" | "steam_boiler3" | "gas_boiler4" | "steam_boiler4", PreviousMeasurement>>;
 
-function completeDelta(current: number | null, previous: number | null, label: string, currentDate: string, previousDate: string, warnings: string[]): DeltaResult {
+function completeDelta(current: number | null, previous: PreviousMeasurement | null, label: string, currentDate: string, warnings: string[]): DeltaResult {
   if (current == null && previous == null) return { value: null, state: "absent" };
   if (current == null) {
     warnings.push(`${label}: current exact-date reading is missing on ${currentDate}.`);
     return { value: null, state: "incomplete" };
   }
-  if (previous == null) {
-    warnings.push(`${label}: previous exact-date reading is missing on ${previousDate}.`);
+  if (!previous) {
+    warnings.push(`${label}: no previous measurement exists before ${currentDate}.`);
     return { value: null, state: "incomplete" };
   }
-  const value = current - previous;
-  if (value < 0) warnings.push(`${label}: current cumulative reading is below the previous calendar-date reading.`);
+  const value = current - previous.value;
+  if (value < 0) warnings.push(`${label}: current cumulative reading is below the previous measurement from ${previous.date}.`);
   return { value, state: "complete" };
 }
 
@@ -52,17 +54,22 @@ export function calculateForm5And6(input: {
   previousDate: string;
   hasCurrent: boolean;
   hasPrevious: boolean;
+  previousMeasurements?: PreviousMeasurementMap;
 }) {
-  const { currentValues, previousValues, currentDate, previousDate, hasCurrent, hasPrevious } = input;
+  const { currentValues, previousValues, currentDate, previousDate, hasCurrent, hasPrevious, previousMeasurements } = input;
   const warnings: string[] = [];
   const dependencyStatus: "current" | "waiting" = hasCurrent && hasPrevious ? "current" : "waiting";
   if (!hasCurrent) warnings.push(`Waiting for completed Form 8 on ${currentDate}.`);
-  if (!hasPrevious) warnings.push(`Waiting for completed Form 8 on previous calendar date ${previousDate}.`);
+  if (!hasPrevious) warnings.push(`Waiting for a completed previous Form 8 measurement before ${currentDate}.`);
 
-  const b3Gas = completeDelta(number(currentValues,"gas_boiler3"), number(previousValues,"gas_boiler3"), "Boiler 3 gas", currentDate, previousDate, warnings);
-  const b3Steam = completeDelta(number(currentValues,"steam_boiler3"), number(previousValues,"steam_boiler3"), "Boiler 3 steam", currentDate, previousDate, warnings);
-  const b4Gas = completeDelta(number(currentValues,"gas_boiler4"), number(previousValues,"gas_boiler4"), "Boiler 4 gas", currentDate, previousDate, warnings);
-  const b4Steam = completeDelta(number(currentValues,"steam_boiler4"), number(previousValues,"steam_boiler4"), "Boiler 4 steam", currentDate, previousDate, warnings);
+  const fallbackPrevious = (key: keyof PreviousMeasurementMap): PreviousMeasurement | null => {
+    const value = number(previousValues, key);
+    return value == null ? null : { value, date: previousDate };
+  };
+  const b3Gas = completeDelta(number(currentValues,"gas_boiler3"), previousMeasurements?.gas_boiler3 ?? fallbackPrevious("gas_boiler3"), "Boiler 3 gas", currentDate, warnings);
+  const b3Steam = completeDelta(number(currentValues,"steam_boiler3"), previousMeasurements?.steam_boiler3 ?? fallbackPrevious("steam_boiler3"), "Boiler 3 steam", currentDate, warnings);
+  const b4Gas = completeDelta(number(currentValues,"gas_boiler4"), previousMeasurements?.gas_boiler4 ?? fallbackPrevious("gas_boiler4"), "Boiler 4 gas", currentDate, warnings);
+  const b4Steam = completeDelta(number(currentValues,"steam_boiler4"), previousMeasurements?.steam_boiler4 ?? fallbackPrevious("steam_boiler4"), "Boiler 4 steam", currentDate, warnings);
   const makeup = delta(number(currentValues,"hotwell_makeup"), number(previousValues,"hotwell_makeup"), "Hotwell makeup", warnings);
   const b2Steam = number(currentValues,"steam_boiler2");
   const steamContributions = [b3Steam, b4Steam]

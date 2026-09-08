@@ -76,13 +76,13 @@ describe("deterministic derived formulas", () => {
     expect(result.form6.cw_makeup_used).toBe(300);
     expect(result.form6.tower_makeup_current).toBe(7000);
   });
-  it("never substitutes a missing previous calendar date", () => {
+  it("waits when there is no previous measurement", () => {
     const result = calculateForm5And6({ currentValues:form8Current, previousValues:{}, currentDate:"2026-09-03", previousDate:"2026-09-02", hasCurrent:true, hasPrevious:false });
     expect(result.status).toBe("waiting");
     expect(result.form5.boiler3_gas_used).toBeNull();
     expect(result.form5.total_steam).toBeNull();
     expect(result.form6.cw_makeup_used).toBeNull();
-    expect(result.warnings.join(" ")).toContain("2026-09-02");
+    expect(result.warnings.join(" ")).toContain("previous Form 8 measurement before 2026-09-03");
   });
   it("retains decreasing cumulative meters with a warning", () => {
     const result = calculateForm5And6({ currentValues:{...form8Current,gas_boiler3:200}, previousValues:form8Previous, currentDate:"2026-09-03", previousDate:"2026-09-02", hasCurrent:true, hasPrevious:true });

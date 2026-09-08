@@ -2,7 +2,7 @@
 import { canonicalRecordId } from "../../shared/canonical";
 import { deriveForm8OatExtrema } from "../../shared/form8Oat";
 import { allFields, getForm } from "../../shared/forms";
-import { calculateForm5And6 } from "../../shared/formulas";
+import { calculateForm5And6, type PreviousMeasurement } from "../../shared/formulas";
 import { nextCalendarDate, normalizeContext, shiftMeasuredAt, TIME_SLOTS } from "../../shared/safetyContract";
 import type { CanonicalRecord, Values } from "../../shared/types";
 import { getPublicRecord, getPublicTrend, getRecord, getTrend, listPublicRecords, listRecords } from "./api";
@@ -52,7 +52,7 @@ export type ResolverOptions = {
   cloudProjections?: readonly CanonicalRecord[];
   fetchProjectionList?: (formKey: string, signal?: AbortSignal) => Promise<CanonicalRecord[]>;
   fetchProjection?: (formKey: string, plantDate: string, signal?: AbortSignal) => Promise<CanonicalRecord | null>;
-  fetchSources?: (formKey: string, plantDate: string, signal?: AbortSignal) => Promise<CanonicalRecord[]>;
+  fetchSources?: (formKey: string, plantDate?: string, signal?: AbortSignal) => Promise<CanonicalRecord[]>;
 };
 
 type TrendOptions = ResolverOptions & {
@@ -128,6 +128,25 @@ function newest(sources: ProjectionSource[]) {
   return [...sources].sort((a, b) => b.revision - a.revision || b.updatedAt.localeCompare(a.updatedAt) || a.aggregateId.localeCompare(b.aggregateId))[0] ?? null;
 }
 
+const BOILER_DELTA_FIELDS = ["gas_boiler3", "steam_boiler3", "gas_boiler4", "steam_boiler4"] as const;
+type BoilerDeltaField = typeof BOILER_DELTA_FIELDS[number];
+
+function latestMeasurement(sources: readonly ProjectionSource[], field: BoilerDeltaField) {
+  for (const source of [...sources].sort((a, b) => b.date.localeCompare(a.date) || b.revision - a.revision || b.updatedAt.localeCompare(a.updatedAt))) {
+    const value = source.values[field];
+    if (typeof value === "number" && Number.isFinite(value)) return { source, measurement: { value, date: source.date } satisfies PreviousMeasurement };
+  }
+  return null;
+}
+
+function latestNumericValue(sources: readonly ProjectionSource[], field: string) {
+  for (const source of [...sources].sort((a, b) => b.date.localeCompare(a.date) || b.revision - a.revision || b.updatedAt.localeCompare(a.updatedAt))) {
+    const value = source.values[field];
+    if (typeof value === "number" && Number.isFinite(value)) return { source, value };
+  }
+  return null;
+}
+
 function dedupe(sources: ProjectionSource[]) {
   const byContext = new Map<string, ProjectionSource>();
   for (const source of sources) {
@@ -147,11 +166,6 @@ export function selectExactSource(local: readonly ProjectionSource[], remote: re
 /** Merges sources by exact normalized context; local never loses to cloud for the same context. */
 export function mergeSourcesByContext(local: readonly ProjectionSource[], remote: readonly ProjectionSource[]) {
   return dedupe([...remote, ...local]);
-}
-
-function eligibleLocal(entries: readonly LocalEntry[], formKey: string, date: string, timeSlot?: string | null) {
-  const expected = sourceContextKey(formKey, date, timeSlot);
-  return entries.map(sourceFromLocal).filter((source): source is ProjectionSource => Boolean(source && source.formKey === formKey && source.contextKey === expected));
 }
 
 function eligibleCloud(records: readonly CanonicalRecord[], formKey: string, date: string, timeSlot?: string | null) {
@@ -242,7 +256,7 @@ async function defaultFetchProjection(formKey: string, plantDate: string, signal
   }
 }
 
-async function defaultFetchSources(formKey: string, plantDate: string, signal?: AbortSignal) {
+async function defaultFetchSources(formKey: string, plantDate?: string, signal?: AbortSignal) {
   const result = getDeviceToken() ? await listRecords(formKey, plantDate, signal) : await listPublicRecords(formKey, plantDate, signal);
   return result.records;
 }
@@ -260,13 +274,11 @@ export async function resolveDerivedProjection(formKey: string, plantDate: strin
   throwIfAborted(options.signal);
   const online = isOnline(options);
   const { localForm8, localForm9 } = await localInputs(options);
-  const previousDate = nextCalendarDate(plantDate, -1);
-  const localCurrent = eligibleLocal(localForm8, FORM8, plantDate);
-  const localPrevious = eligibleLocal(localForm8, FORM8, previousDate);
+  const localForm8Sources = localForm8.map(sourceFromLocal).filter((source): source is ProjectionSource => Boolean(source && source.formKey === FORM8));
   const localOat = formKey === FORM5
     ? localForm9.map(sourceFromLocal).filter((source): source is ProjectionSource => Boolean(source && source.formKey === FORM9 && source.date === plantDate && source.timeSlot))
     : [];
-  const hasLocalOverride = localCurrent.length > 0 || localPrevious.length > 0 || localOat.length > 0;
+  const hasLocalOverride = localForm8Sources.length > 0 || localOat.length > 0;
   const fetchProjection = options.fetchProjection ?? defaultFetchProjection;
   const fetchSources = options.fetchSources ?? defaultFetchSources;
   const hasProvidedProjection = Object.prototype.hasOwnProperty.call(options, "cloudProjection");
@@ -290,30 +302,46 @@ export async function resolveDerivedProjection(formKey: string, plantDate: strin
     }
   }
 
-  let remoteCurrent: CanonicalRecord[] = [];
-  let remotePrevious: CanonicalRecord[] = [];
+  let remoteForm8: CanonicalRecord[] = [];
   let remoteOat: CanonicalRecord[] = [];
   if (online) {
     const requests: Array<Promise<void>> = [];
-    if (!localCurrent.length) requests.push(fetchSources(FORM8, plantDate, options.signal).then(records => { remoteCurrent = records; }).catch(error => { throwIfAborted(options.signal); }));
-    if (!localPrevious.length) requests.push(fetchSources(FORM8, previousDate, options.signal).then(records => { remotePrevious = records; }).catch(error => { throwIfAborted(options.signal); }));
+    requests.push(fetchSources(FORM8, undefined, options.signal).then(records => { remoteForm8 = records; }).catch(error => { throwIfAborted(options.signal); }));
     if (formKey === FORM5) requests.push(fetchSources(FORM9, plantDate, options.signal).then(records => { remoteOat = records; }).catch(error => { throwIfAborted(options.signal); }));
     await Promise.all(requests);
   }
 
-  const current = selectExactSource(localCurrent, eligibleCloud(remoteCurrent, FORM8, plantDate), sourceContextKey(FORM8, plantDate));
-  const previous = selectExactSource(localPrevious, eligibleCloud(remotePrevious, FORM8, previousDate), sourceContextKey(FORM8, previousDate));
+  const remoteForm8Sources = remoteForm8.map(sourceFromCloud).filter((source): source is ProjectionSource => Boolean(source && source.formKey === FORM8));
+  const form8Sources = dedupe([...remoteForm8Sources, ...localForm8Sources]);
+  const current = newest(form8Sources.filter(source => source.date === plantDate));
+  const priorSources = form8Sources.filter(source => source.date < plantDate).sort((a, b) => b.date.localeCompare(a.date) || b.revision - a.revision || b.updatedAt.localeCompare(a.updatedAt));
+  const previous = priorSources[0] ?? null;
+  const previousValues: Values = {};
+  for (const field of ["hotwell_makeup", "cw_makeup"] as const) {
+    const selected = latestNumericValue(priorSources, field);
+    if (selected) previousValues[field] = selected.value;
+  }
+  const previousMeasurements: Partial<Record<BoilerDeltaField, PreviousMeasurement>> = {};
+  const selectedPriorSources = new Map<string, ProjectionSource>();
+  for (const field of BOILER_DELTA_FIELDS) {
+    const selected = latestMeasurement(priorSources, field);
+    if (!selected) continue;
+    previousMeasurements[field] = selected.measurement;
+    selectedPriorSources.set(`${selected.source.aggregateId}@${selected.source.revision}`, selected.source);
+  }
+  if (previous) selectedPriorSources.set(`${previous.aggregateId}@${previous.revision}`, previous);
   const oatSources = mergeSourcesByContext(localOat, eligibleCloud(remoteOat, FORM9, plantDate));
-  const effectiveSources = [current, previous, ...oatSources].filter((source): source is ProjectionSource => Boolean(source));
+  const effectiveSources = [current, ...selectedPriorSources.values(), ...oatSources].filter((source): source is ProjectionSource => Boolean(source));
   if (!effectiveSources.length) return { record: null, origin: null, status: "waiting", warnings: [], sources: [] };
 
   const calculated = calculateForm5And6({
     currentValues: current?.values ?? {},
-    previousValues: previous?.values ?? {},
+    previousValues,
     currentDate: plantDate,
-    previousDate,
+    previousDate: previous?.date ?? nextCalendarDate(plantDate, -1),
     hasCurrent: Boolean(current),
-    hasPrevious: Boolean(previous),
+    hasPrevious: priorSources.length > 0,
+    previousMeasurements,
   });
   const values = formKey === FORM5 ? calculated.form5 : calculated.form6;
   if (formKey === FORM5) {

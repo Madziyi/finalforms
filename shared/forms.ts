@@ -173,7 +173,7 @@ export const FORMS: FormDefinition[] = [
     backupWorksheetName: "05 Daily Consumption",
     schedule: "derived",
     derivedFrom: "integrator-readings",
-    description: "Read-only local-first projection from exact completed Form 8 dates, with the canonical server projection as fallback.",
+    description: "Read-only local-first projection from the current Form 8 date and most recent prior measurements, with the canonical server projection as fallback.",
     sections: [
       section("weather", "Outside Air Temperature", [
         n("oat_high", "OAT High", { unit: "°F", calculated: true }),
@@ -209,11 +209,11 @@ export const FORMS: FormDefinition[] = [
     backupWorksheetName: "06 Makeup",
     schedule: "derived",
     derivedFrom: "integrator-readings",
-    description: "Read-only local-first projection from exact current and previous calendar-date Form 8 records, with server fallback.",
+    description: "Read-only local-first projection from the current Form 8 date and most recent prior measurements, with server fallback.",
     sections: [
       section("readings", "Derived Makeup Readings", [
         n("cw_makeup_current", "C.W. Makeup — Current Reading", { calculated: true }),
-        n("cw_makeup_used", "C.W. Makeup — Daily Usage", { calculated: true, helpText: "Current date C.W. Makeup minus previous calendar date C.W. Makeup" }),
+        n("cw_makeup_used", "C.W. Makeup — Daily Usage", { calculated: true, helpText: "Current date C.W. Makeup minus the most recent prior C.W. Makeup reading" }),
         n("tower_makeup_current", "Tower Makeup — Current Reading", { calculated: true }),
       ]),
     ],

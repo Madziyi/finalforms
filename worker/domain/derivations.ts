@@ -1,7 +1,7 @@
 import { nextCalendarDate } from "../../shared/safetyContract";
 import { canonicalRecordId } from "../../shared/canonical";
 import { deriveForm8OatExtrema, type OatSourceRecord } from "../../shared/form8Oat";
-import { calculateForm5And6, DERIVED_FORMULA_VERSION } from "../../shared/formulas";
+import { calculateForm5And6, DERIVED_FORMULA_VERSION, type PreviousMeasurement } from "../../shared/formulas";
 import type { Values } from "../../shared/types";
 import { stableStringify } from "./hash";
 import { derivedNumericStatements } from "./trends";
@@ -20,10 +20,32 @@ type SourceRow = DerivedSourceRow;
 type OatSourceRow = DerivedSourceRow & { time_slot: string | null };
 
 async function sourceForDate(db: D1Database, plantDate: string): Promise<SourceRow | null> {
-  const latest = await db.prepare(`SELECT canonical_id,revision,plant_date,values_json FROM canonical_records WHERE form_key='integrator-readings' AND plant_date=? LIMIT 1`).bind(plantDate).first<any>();
+  const latest = await db.prepare(`SELECT canonical_id,revision,plant_date,values_json FROM canonical_records WHERE form_key='integrator-readings' AND plant_date=? ORDER BY revision DESC,canonical_id LIMIT 1`).bind(plantDate).first<any>();
   return latest
     ? { revision_id: `${latest.canonical_id}@r${latest.revision}`, aggregate_id: latest.canonical_id, revision: Number(latest.revision), plant_date: latest.plant_date, values_json: latest.values_json }
     : null;
+}
+
+async function sourcesBefore(db: D1Database, plantDate: string): Promise<SourceRow[]> {
+  const result = await db.prepare(`SELECT canonical_id,revision,plant_date,values_json FROM canonical_records WHERE form_key='integrator-readings' AND plant_date < ? ORDER BY plant_date DESC,revision DESC,canonical_id LIMIT 3650`).bind(plantDate).all<any>();
+  return (result.results ?? []).map((row): SourceRow => ({
+    revision_id: `${row.canonical_id}@r${row.revision}`,
+    aggregate_id: row.canonical_id,
+    revision: Number(row.revision),
+    plant_date: row.plant_date,
+    values_json: row.values_json,
+  }));
+}
+
+const BOILER_DELTA_FIELDS = ["gas_boiler3", "steam_boiler3", "gas_boiler4", "steam_boiler4"] as const;
+type BoilerDeltaField = typeof BOILER_DELTA_FIELDS[number];
+
+function latestMeasurement(rows: readonly SourceRow[], field: BoilerDeltaField): { source: SourceRow; measurement: PreviousMeasurement } | null {
+  for (const row of rows) {
+    const value = (JSON.parse(row.values_json) as Values)[field];
+    if (typeof value === "number" && Number.isFinite(value)) return { source: row, measurement: { value, date: row.plant_date } };
+  }
+  return null;
 }
 
 async function oatSourcesForDate(db: D1Database, plantDate: string): Promise<{ rows: OatSourceRow[]; records: OatSourceRecord[] }> {
@@ -115,10 +137,27 @@ async function upsertProjection(db: D1Database, formKey: "daily-consumption-tota
 export async function recomputeDerivedDate(db: D1Database, plantDate: string) {
   const previousDate = nextCalendarDate(plantDate, -1);
   const current = await sourceForDate(db, plantDate);
-  const previous = await sourceForDate(db, previousDate);
-  const refs = sourceRefs([...(previous ? [previous] : []), ...(current ? [current] : [])]);
+  const priorSources = await sourcesBefore(db, plantDate);
+  const previous = priorSources[0] ?? null;
   const currentValues = current ? JSON.parse(current.values_json) as Values : {};
-  const previousValues = previous ? JSON.parse(previous.values_json) as Values : {};
+  const previousValues: Values = {};
+  const previousMeasurements: Partial<Record<BoilerDeltaField, PreviousMeasurement>> = {};
+  const selectedPriorSources = new Map<string, SourceRow>();
+  for (const field of BOILER_DELTA_FIELDS) {
+    const selected = latestMeasurement(priorSources, field);
+    if (!selected) continue;
+    previousMeasurements[field] = selected.measurement;
+    selectedPriorSources.set(`${selected.source.aggregate_id}@${selected.source.revision}`, selected.source);
+  }
+  for (const field of ["hotwell_makeup", "cw_makeup"] as const) {
+    const selected = priorSources.find((row) => {
+      const value = (JSON.parse(row.values_json) as Values)[field];
+      return typeof value === "number" && Number.isFinite(value);
+    });
+    if (selected) previousValues[field] = (JSON.parse(selected.values_json) as Values)[field];
+  }
+  if (previous) selectedPriorSources.set(`${previous.aggregate_id}@${previous.revision}`, previous);
+  const refs = sourceRefs([...selectedPriorSources.values(), ...(current ? [current] : [])]);
   const oatSources = await oatSourcesForDate(db, plantDate);
   const calculated = calculateForm5And6({
     currentValues,
@@ -126,14 +165,15 @@ export async function recomputeDerivedDate(db: D1Database, plantDate: string) {
     currentDate: plantDate,
     previousDate,
     hasCurrent: Boolean(current),
-    hasPrevious: Boolean(previous),
+    hasPrevious: priorSources.length > 0,
+    previousMeasurements,
   });
   const dependencyStatus = calculated.status;
   const warnings = calculated.warnings;
   const form5 = applyForm5OatExtrema(calculated.form5, oatSources.records, plantDate);
   const form6 = calculated.form6;
   const form5Refs = sourceRefs([
-    ...(previous ? [previous] : []),
+    ...selectedPriorSources.values(),
     ...(current ? [current] : []),
     ...oatSources.rows,
   ]);
