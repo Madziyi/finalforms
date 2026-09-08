@@ -19,6 +19,16 @@ export type DerivedSourceRow = {
 type SourceRow = DerivedSourceRow;
 type OatSourceRow = DerivedSourceRow & { time_slot: string | null };
 
+export const BOILER_DELTA_FIELDS = ["gas_boiler3", "steam_boiler3", "gas_boiler4", "steam_boiler4"] as const;
+export type BoilerDeltaField = typeof BOILER_DELTA_FIELDS[number];
+
+export type DerivedProjectionCalculation = {
+  plantDate: string;
+  form5: { values: Values; status: "current" | "waiting"; sourceRefs: ReturnType<typeof sourceRefs> };
+  form6: { values: Values; status: "current" | "waiting"; sourceRefs: ReturnType<typeof sourceRefs> };
+  warnings: string[];
+};
+
 async function sourceForDate(db: D1Database, plantDate: string): Promise<SourceRow | null> {
   const latest = await db.prepare(`SELECT canonical_id,revision,plant_date,values_json FROM canonical_records WHERE form_key='integrator-readings' AND plant_date=? ORDER BY revision DESC,canonical_id LIMIT 1`).bind(plantDate).first<any>();
   return latest
@@ -36,9 +46,6 @@ async function sourcesBefore(db: D1Database, plantDate: string): Promise<SourceR
     values_json: row.values_json,
   }));
 }
-
-const BOILER_DELTA_FIELDS = ["gas_boiler3", "steam_boiler3", "gas_boiler4", "steam_boiler4"] as const;
-type BoilerDeltaField = typeof BOILER_DELTA_FIELDS[number];
 
 function latestMeasurement(rows: readonly SourceRow[], field: BoilerDeltaField): { source: SourceRow; measurement: PreviousMeasurement } | null {
   for (const row of rows) {
@@ -89,6 +96,58 @@ export function applyForm5OatExtrema(form5Values: Values, sourceRecords: readonl
   };
 }
 
+export function calculateDerivedProjections(plantDate: string, form8Rows: readonly SourceRow[], oatRows: readonly OatSourceRow[] = []): DerivedProjectionCalculation {
+  const previousDate = nextCalendarDate(plantDate, -1);
+  const current = [...form8Rows]
+    .filter((row) => row.plant_date === plantDate)
+    .sort((a, b) => b.revision - a.revision || b.aggregate_id.localeCompare(a.aggregate_id))[0] ?? null;
+  const priorSources = [...form8Rows]
+    .filter((row) => row.plant_date < plantDate)
+    .sort((a, b) => b.plant_date.localeCompare(a.plant_date) || b.revision - a.revision || a.aggregate_id.localeCompare(b.aggregate_id));
+  const currentValues = current ? JSON.parse(current.values_json) as Values : {};
+  const previousValues: Values = {};
+  const previousMeasurements: Partial<Record<BoilerDeltaField, PreviousMeasurement>> = {};
+  const selectedPriorSources = new Map<string, SourceRow>();
+  for (const field of BOILER_DELTA_FIELDS) {
+    const selected = latestMeasurement(priorSources, field);
+    if (!selected) continue;
+    previousMeasurements[field] = selected.measurement;
+    selectedPriorSources.set(`${selected.source.aggregate_id}@${selected.source.revision}`, selected.source);
+  }
+  for (const field of ["hotwell_makeup", "cw_makeup"] as const) {
+    const selected = priorSources.find((row) => {
+      const value = (JSON.parse(row.values_json) as Values)[field];
+      return typeof value === "number" && Number.isFinite(value);
+    });
+    if (selected) previousValues[field] = (JSON.parse(selected.values_json) as Values)[field];
+  }
+  if (priorSources[0]) selectedPriorSources.set(`${priorSources[0].aggregate_id}@${priorSources[0].revision}`, priorSources[0]);
+  const refs = sourceRefs([...selectedPriorSources.values(), ...(current ? [current] : [])]);
+  const oatRecords = oatRows.map((row) => ({
+    date: row.plant_date,
+    timeSlot: row.time_slot,
+    values: JSON.parse(row.values_json) as Values,
+    status: "completed" as const,
+    lifecycle: "completed" as const,
+  }));
+  const calculated = calculateForm5And6({
+    currentValues,
+    previousValues,
+    currentDate: plantDate,
+    previousDate: priorSources[0]?.plant_date ?? previousDate,
+    hasCurrent: Boolean(current),
+    hasPrevious: priorSources.length > 0,
+    previousMeasurements,
+  });
+  const form5Refs = sourceRefs([...selectedPriorSources.values(), ...(current ? [current] : []), ...oatRows]);
+  return {
+    plantDate,
+    form5: { values: applyForm5OatExtrema(calculated.form5, oatRecords, plantDate), status: calculated.status, sourceRefs: form5Refs },
+    form6: { values: calculated.form6, status: calculated.status, sourceRefs: refs },
+    warnings: calculated.warnings,
+  };
+}
+
 async function upsertProjection(db: D1Database, formKey: "daily-consumption-totals"|"makeup", plantDate: string, baseValues: Values, status: "current"|"waiting", refs: ReturnType<typeof sourceRefs>, warnings: string[]) {
   const existing = await db.prepare(`SELECT projection_id,revision,status,formula_version,source_revisions_json,base_values_json,effective_values_json,warnings_json FROM derived_projections WHERE form_key=? AND plant_date=?`).bind(formKey, plantDate).first<{projection_id:string;revision:number;status:string;formula_version:number;source_revisions_json:string;base_values_json:string;effective_values_json:string;warnings_json:string}>();
   const projectionId = existing?.projection_id ?? canonicalRecordId(formKey, plantDate);
@@ -135,57 +194,52 @@ async function upsertProjection(db: D1Database, formKey: "daily-consumption-tota
 }
 
 export async function recomputeDerivedDate(db: D1Database, plantDate: string) {
-  const previousDate = nextCalendarDate(plantDate, -1);
   const current = await sourceForDate(db, plantDate);
   const priorSources = await sourcesBefore(db, plantDate);
-  const previous = priorSources[0] ?? null;
-  const currentValues = current ? JSON.parse(current.values_json) as Values : {};
-  const previousValues: Values = {};
-  const previousMeasurements: Partial<Record<BoilerDeltaField, PreviousMeasurement>> = {};
-  const selectedPriorSources = new Map<string, SourceRow>();
-  for (const field of BOILER_DELTA_FIELDS) {
-    const selected = latestMeasurement(priorSources, field);
-    if (!selected) continue;
-    previousMeasurements[field] = selected.measurement;
-    selectedPriorSources.set(`${selected.source.aggregate_id}@${selected.source.revision}`, selected.source);
-  }
-  for (const field of ["hotwell_makeup", "cw_makeup"] as const) {
-    const selected = priorSources.find((row) => {
-      const value = (JSON.parse(row.values_json) as Values)[field];
-      return typeof value === "number" && Number.isFinite(value);
-    });
-    if (selected) previousValues[field] = (JSON.parse(selected.values_json) as Values)[field];
-  }
-  if (previous) selectedPriorSources.set(`${previous.aggregate_id}@${previous.revision}`, previous);
-  const refs = sourceRefs([...selectedPriorSources.values(), ...(current ? [current] : [])]);
   const oatSources = await oatSourcesForDate(db, plantDate);
-  const calculated = calculateForm5And6({
-    currentValues,
-    previousValues,
-    currentDate: plantDate,
-    previousDate,
-    hasCurrent: Boolean(current),
-    hasPrevious: priorSources.length > 0,
-    previousMeasurements,
-  });
-  const dependencyStatus = calculated.status;
-  const warnings = calculated.warnings;
-  const form5 = applyForm5OatExtrema(calculated.form5, oatSources.records, plantDate);
-  const form6 = calculated.form6;
-  const form5Refs = sourceRefs([
-    ...selectedPriorSources.values(),
-    ...(current ? [current] : []),
-    ...oatSources.rows,
-  ]);
-
-  const form5Result = await upsertProjection(db, "daily-consumption-totals", plantDate, form5, dependencyStatus, form5Refs, warnings);
-  const form6Result = await upsertProjection(db, "makeup", plantDate, form6, dependencyStatus, refs, warnings);
-  return { plantDate, form5: form5Result, form6: form6Result, warnings };
+  const calculated = calculateDerivedProjections(plantDate, [...priorSources, ...(current ? [current] : [])], oatSources.rows);
+  const form5Result = await upsertProjection(db, "daily-consumption-totals", plantDate, calculated.form5.values, calculated.form5.status, calculated.form5.sourceRefs, calculated.warnings);
+  const form6Result = await upsertProjection(db, "makeup", plantDate, calculated.form6.values, calculated.form6.status, calculated.form6.sourceRefs, calculated.warnings);
+  return { plantDate, form5: form5Result, form6: form6Result, warnings: calculated.warnings };
 }
 
-export async function recomputeAfterIntegratorChange(db: D1Database, plantDate: string) {
-  const dates = [plantDate, nextCalendarDate(plantDate, 1)];
+export function projectionRefreshDatesFromRows(baseDates: readonly string[], rows: readonly DerivedSourceRow[]) {
+  const uniqueBases = [...new Set(baseDates)].sort();
+  const dates = new Set(uniqueBases.flatMap((date) => [date, nextCalendarDate(date, 1)]));
+  if (!uniqueBases.length) return [];
+  for (const baseDate of uniqueBases) {
+    const pending = new Set<string>(BOILER_DELTA_FIELDS);
+    for (const row of rows) {
+      if (row.plant_date <= baseDate) continue;
+      const values = JSON.parse(row.values_json) as Values;
+      for (const field of [...pending]) {
+        const value = values[field];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          dates.add(row.plant_date);
+          pending.delete(field);
+        }
+      }
+      if (!pending.size) break;
+    }
+  }
+  return [...dates].sort();
+}
+
+export async function projectionRefreshDates(db: D1Database, baseDates: readonly string[]) {
+  const uniqueBases = [...new Set(baseDates)].sort();
+  if (!uniqueBases.length) return [];
+  const result = await db.prepare(`SELECT canonical_id,revision,plant_date,values_json FROM canonical_records WHERE form_key='integrator-readings' AND plant_date>? ORDER BY plant_date ASC,revision DESC,canonical_id`).bind(uniqueBases[0]).all<any>();
+  const rows = (result.results ?? []) as DerivedSourceRow[];
+  return projectionRefreshDatesFromRows(uniqueBases, rows);
+}
+
+export async function recomputeAfterIntegratorChanges(db: D1Database, baseDates: readonly string[]) {
+  const dates = await projectionRefreshDates(db, baseDates);
   const results = [];
   for (const date of dates) results.push(await recomputeDerivedDate(db, date));
   return results;
+}
+
+export async function recomputeAfterIntegratorChange(db: D1Database, plantDate: string) {
+  return recomputeAfterIntegratorChanges(db, [plantDate]);
 }

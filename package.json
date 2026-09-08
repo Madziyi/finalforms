@@ -22,6 +22,7 @@
     "smoke:local": "node scripts/smoke-local.mjs",
     "backfill:dry-run": "node --experimental-strip-types scripts/backfill-dry-run.ts",
     "backfill:apply": "node --experimental-strip-types scripts/backfill-apply.ts",
+    "projection-refresh": "vite-node scripts/projection-refresh.ts",
     "dev:web": "vite",
     "dev:worker": "wrangler dev --config wrangler.canonical.jsonc --port 8787",
     "dev:worker:remote": "wrangler dev --remote --config wrangler.canonical.jsonc --port 8787"

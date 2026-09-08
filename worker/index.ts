@@ -3,7 +3,7 @@ import { buildAiCapturePrompt, normalizeAiCaptureResponse } from "./domain/aiCap
 import { APP_SCHEMA_VERSION, PROTOCOL_VERSION, nextCalendarDate, shiftMeasuredAt } from "../shared/safetyContract";
 import type { CanonicalRecord, OperatorRecord, Values } from "../shared/types";
 import { backupStatus, previousTorontoDate } from "./domain/backup";
-import { recomputeDerivedDate } from "./domain/derivations";
+import { projectionRefreshDates, recomputeDerivedDate } from "./domain/derivations";
 import { DomainError } from "./domain/validation";
 import { openAttention } from "./domain/db";
 import { getLatestCompleted, listLatestCompleted, upsertCompletedRecord } from "./domain/localFirst";
@@ -201,8 +201,8 @@ async function api(request: Request, env: Env, ctx: ExecutionContext): Promise<R
     const payload=await readJson(request);
     const result=await upsertCompletedRecord(env.DB,payload);
     if(result.outcome==="accepted" && (result.record?.formKey==="integrator-readings" || result.record?.formKey==="gas-turbine-log-sheet")){
-      const dates=new Set<string>((result.affectedDates as string[]|undefined)??[result.record.date,nextCalendarDate(result.record.date,1)]);
-      ctx.waitUntil((async()=>{for(const date of dates){try{await recomputeDerivedDate(env.DB,date);}catch(error){console.error("Local-first projection refresh failed",date,error);await openAttention(env.DB,{plantDate:date,category:"derivation",code:"projection_refresh_failed",severity:"error",message:"Form 5/Form 6 recalculation failed after a completed Form 8 or Form 9 upload.",details:{error:String(error)}}).catch(()=>undefined);}}})());
+      const baseDates=(result.affectedDates as string[]|undefined)??[result.record.date];
+      ctx.waitUntil((async()=>{const dates=result.record.formKey==="integrator-readings" ? await projectionRefreshDates(env.DB,baseDates) : [...new Set(baseDates)]; for(const date of dates){try{await recomputeDerivedDate(env.DB,date);}catch(error){console.error("Local-first projection refresh failed",date,error);await openAttention(env.DB,{plantDate:date,category:"derivation",code:"projection_refresh_failed",severity:"error",message:"Form 5/Form 6 recalculation failed after a completed Form 8 or Form 9 upload.",details:{error:String(error)}}).catch(()=>undefined);}}})());
     }
     return json(result);
   }
