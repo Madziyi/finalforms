@@ -306,10 +306,8 @@ function transformValues(row: LegacyRow, form: FormDefinition, raw: Record<strin
     for (const key of ["p_alk", "m_alk"]) {
       consume(key);
       const parsed = finiteNumber(raw[key]);
-      if (parsed == null) addAnomaly(anomalies, row, "conversion", key, raw[key], `Legacy ${key} is missing or non-numeric; derived burette reading omitted.`);
+      if (parsed == null) addAnomaly(anomalies, row, "conversion", key, raw[key], `Legacy ${key} is missing or non-numeric; direct value omitted.`);
       else {
-        const buretteKey = key === "p_alk" ? "p_alk_burette" : "m_alk_burette";
-        values[buretteKey] = parsed / 20;
         values[key] = parsed;
       }
     }
@@ -584,7 +582,7 @@ ${formLines || "| *(none)* | 0 | 0 |"}
 - Only rows from the current completed-record table were considered; drafts, revisions, receipts, projections, adjustments, and backups were not queried or imported.
 - Forms 1, 2, 3, 7, 8, and 9 are eligible. Forms 5 and 6 and any other source form are excluded; old derived projections are never imported.
 - Form 1 maps legacy \`molybdenum\` to \`ptsa\` and converts Pump Sp/St to the current paired numeric shape when parseable.
-- Form 2 derives burette readings from legacy P/M values, recomputes P/M/OH using current rules, and omits legacy OH and totals.
+- Form 2 imports final P/M values, recomputes OH using the current direct-entry rule, and omits legacy OH and totals.
 - Form 8 omits legacy OAT high/low because current display values derive from Form 9.
 - Forms 3 and 9 import only old slots 02:00, 06:00, 10:00, 14:00, 18:00, and 22:00, mapped to 03:00, 07:00, 11:00, 15:00, 19:00, and 23:00. All other slots are excluded entirely.
 - Approved omissions, retired Form 9 gas-fuel pressure fields, and the one approved Form 1 Pump Sp/St correction are audit notes in \`anomalies.csv\`, not warnings.

@@ -156,6 +156,7 @@ input:focus, select:focus { border-color: #8788e9; box-shadow: 0 0 0 3px rgba(87
 .entry-cell > span:first-child { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #7b8698; font-weight: 700; }
 .entry-cell input { width: 100%; font-size: 17px; font-weight: 600; }
 .input-with-unit { display: flex; align-items: center; gap: 7px; }
+.read-only-value { display: block; width: 100%; font-size: 17px; font-weight: 600; }
 .unit-suffix { font-size: 11px; color: #7b8698; min-width: max-content; }
 .range-warning { display: inline-flex; align-items: center; gap: 5px; color: var(--warning); font-size: 10px; font-weight: 700; }
 .history-cell { min-width: 0; display: grid; gap: 8px; }

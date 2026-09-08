@@ -94,7 +94,13 @@ export function validateCompletedUpload(input: unknown): CompletedRecordUpload {
   catch (error) { throw new DomainError("invalid_context", error instanceof Error ? error.message : String(error), 422); }
   if (record.contextKey != null && record.contextKey !== contextKey) throw new DomainError("invalid_context", "Record context does not match its date and context fields.", 422);
   if (record.aggregateId !== canonicalRecordId(form.key, { date: record.date, shift: record.shift as any, timeSlot: record.timeSlot, boilerNumber: record.boilerNumber as any })) throw new DomainError("invalid_identity", "aggregateId must exactly match the selected operational context.", 422);
-  const normalized = validateFormValues(form.key, form.version, { date: record.date, shift: record.shift as any, timeSlot: record.timeSlot, boilerNumber: record.boilerNumber as any }, record.values);
+  const rawRecordValues = record.values;
+  const legacyForm2Values = form.key === "boiler-water-control-tests" && Boolean(rawRecordValues && typeof rawRecordValues === "object" && ("p_alk_burette" in rawRecordValues || "m_alk_burette" in rawRecordValues));
+  const submittedFormVersion = payload.formVersion ?? (legacyForm2Values ? 3 : form.version);
+  if (submittedFormVersion !== form.version && !(form.key === "boiler-water-control-tests" && submittedFormVersion === 3)) {
+    throw new DomainError("form_version", `Form version ${form.version} is required.`, 409);
+  }
+  const normalized = validateFormValues(form.key, submittedFormVersion, { date: record.date, shift: record.shift as any, timeSlot: record.timeSlot, boilerNumber: record.boilerNumber as any }, record.values);
   if (!Number.isInteger(payload.localVersion) || Number(payload.localVersion) < 1) throw new DomainError("invalid_revision", "localVersion must be a positive revision number.", 422);
   record.contextKey = normalized.contextKey; record.values = normalized.values; record.generation = Number(generation); record.revision = Number(payload.localVersion); record.publishedRevision = null;
   // Generation is the tablet freshness fence; localVersion is the snapshot

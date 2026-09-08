@@ -5,6 +5,8 @@ import type { CanonicalRecord, Values } from "../shared/types";
 import {
   mergeSourcesByContext,
   resolveDerivedProjection,
+  resolveDerivedHistory,
+  derivedTrendPoints,
   selectExactSource,
   type ProjectionSource,
 } from "../src/lib/derivedProjections";
@@ -119,11 +121,33 @@ describe("client Form 5/6 local-first projections", () => {
       localForm8: [],
       localForm9: [],
       cloudProjection: projection,
-      fetchSources: async () => { throw new Error("source fetch should not be used"); },
+      fetchSources: async () => [],
     });
     expect(result.origin).toBe("cloud");
     expect(result.status).toBe("current");
     expect(result.record?.values.total_steam).toBe(123);
+  });
+
+  it("reconciles a cloud Form 5 OAT overlay through the same exact-date Form 9 slots", async () => {
+    const projection = cloudRecord("daily-consumption-totals", currentDate, { oat_high: 99, oat_low: 1, total_steam: 123 }, null, { provenance: { status: "current" } });
+    const result = await resolveDerivedProjection("daily-consumption-totals", currentDate, {
+      online: true, localForm8: [], localForm9: [], cloudProjection: projection,
+      fetchSources: async (formKey) => formKey === "gas-turbine-log-sheet" ? [
+        cloudRecord("gas-turbine-log-sheet", currentDate, { oat_memorial: 78 }, "03:00"),
+        cloudRecord("gas-turbine-log-sheet", currentDate, { oat_memorial: 62 }, "07:00"),
+      ] : [],
+    });
+    expect(result.record?.values).toMatchObject({ oat_high: 78, oat_low: 62 });
+  });
+
+  it("uses the centralized resolved values when a trend has stale cloud OAT observations", async () => {
+    const projection = cloudRecord("daily-consumption-totals", currentDate, { oat_high: 99, oat_low: 1 }, null, { provenance: { status: "current" } });
+    const points = await derivedTrendPoints("daily-consumption-totals", "oat_high", {
+      online: true, localForm8: [], localForm9: [], cloudProjections: [projection],
+      fetchTrend: async () => [{ aggregate_id: projection.aggregateId, plant_date: currentDate, measured_at: `${currentDate}T23:59:00`, numeric_value: 99 }],
+      fetchSources: async (formKey) => formKey === "gas-turbine-log-sheet" ? [cloudRecord("gas-turbine-log-sheet", currentDate, { oat_memorial: 78 }, "03:00")] : [],
+    });
+    expect(points[0].numeric_value).toBe(78);
   });
 
   it("ignores local drafts and temporary edits so cloud remains eligible", async () => {
@@ -194,5 +218,13 @@ describe("client Form 5/6 local-first projections", () => {
     const result = await resolveDerivedProjection("makeup", currentDate, { online: false, localForm8: [localEntry("integrator-readings", previousDate, values()), localEntry("integrator-readings", currentDate, values())], localForm9: [] });
     expect(result.record?.aggregateId).toBe(canonicalRecordId("makeup", currentDate));
     await expect(saveLocalEntry(localEntry("makeup", currentDate, result.record?.values ?? {}))).rejects.toThrow("read-only");
+  });
+
+  it("builds five strictly earlier, finite, current projection points per field", async () => {
+    const projections = ["2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06", "2026-09-07", "2026-09-08"].map((date, index) => cloudRecord("makeup", date, { cw_makeup_current: index === 1 ? Number.NaN : index }, null, { provenance: { status: index === 5 ? "waiting" : "current" } }));
+    const history = await resolveDerivedHistory("makeup", "2026-09-09", { online: true, localForm8: [], localForm9: [], cloudProjections: projections });
+    expect(history.cw_makeup_current.map(point => point.plant_date)).toEqual(["2026-09-08", "2026-09-06", "2026-09-05", "2026-09-04", "2026-09-02"]);
+    expect(history.cw_makeup_current.every(point => point.plant_date < "2026-09-09")).toBe(true);
+    expect(history.cw_makeup_current.every(point => point.aggregate_id === canonicalRecordId("makeup", point.plant_date))).toBe(true);
   });
 });

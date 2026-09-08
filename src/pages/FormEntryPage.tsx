@@ -13,11 +13,12 @@ import { FORM8_OAT_EXTREME_KEYS, resolveForm8OatExtrema } from "../lib/form8OatE
 import { calculateOhAlk } from "../../shared/formulas";
 import { normalizeContext, SHIFT_OPTIONS, shiftMeasuredAt } from "../../shared/safetyContract";
 import { FORM2_DAILY_TOTAL_KEYS } from "../../shared/form2DailyTotals";
-import { projectionOriginLabel, resolveDerivedProjection, type ResolvedDerivedProjection } from "../lib/derivedProjections";
+import { projectionOriginLabel, resolveDerivedHistory, resolveDerivedProjection, type ResolvedDerivedProjection } from "../lib/derivedProjections";
 import { adoptExistingEntry, completeLocalEntry, DuplicateContextError, getOperators, listLocalEntries, loadLocalEntry, localEntryFromRecord, newLocalEntry, saveLocalEntry, type LocalEntry } from "../lib/offlineDb";
 import { onUpdateCheckpointRequest, setEditActive } from "../lib/pwaUpdateCoordinator";
 import type { FieldValue } from "../types";
 import { BOILERS, TIME_SLOTS } from "../types";
+import { form2DisplayValues, upgradeForm2WorkingValues } from "../lib/form2Values";
 type HistoryPoint = HistoryMap[string][number];
 function localMeasuredAt(entry: LocalEntry) {
   if (entry.context.timeSlot) return `${entry.context.date}T${entry.context.timeSlot}:00`;
@@ -115,6 +116,7 @@ function DerivedFormPage({
   const form = getForm(formKey)!;
   const [date, setDate] = useState(todayPlantDate());
   const [projection, setProjection] = useState<ResolvedDerivedProjection>({ record: null, origin: null, status: "waiting", warnings: [], sources: [] });
+  const [history, setHistory] = useState<HistoryMap>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -157,8 +159,29 @@ function DerivedFormPage({
       window.removeEventListener("ecc-local-change", refresh);
     };
   }, [date, formKey]);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const local = await resolveDerivedHistory(formKey, date, { online: false, signal: controller.signal });
+        if (!active) return;
+        setHistory(local);
+        if (navigator.onLine) {
+          const remote = await resolveDerivedHistory(formKey, date, { signal: controller.signal });
+          if (active) setHistory(remote);
+        }
+      } catch (error) {
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) setHistory(current => current);
+      }
+    };
+    void load();
+    const refresh = () => void load();
+    window.addEventListener("ecc-local-change", refresh);
+    return () => { active = false; controller.abort(); window.removeEventListener("ecc-local-change", refresh); };
+  }, [date, formKey]);
   const record = projection.record;
-  return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · read-only projection</div><h1>{form.name}</h1><p>{form.description}</p></div></div><div className="metadata-panel"><label className="metadata-field"><span>Plant date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label><div className="metadata-field"><span>Projection status</span><div className={`notice ${projection.status === "current" ? "" : "warning"}`}><ShieldCheck size={17} /> {projectionOriginLabel(projection.origin, projection.status)}</div></div></div>{message && <div className="notice warning"><CircleAlert size={18} />{message}</div>}{!record ? <div className="empty-state"><h2>{busy ? "Loading…" : "Waiting"}</h2><p>Exact completed Form 8 source dates are required. Server projection fallback is used when this tablet has no local source override.</p></div> : <><FormRenderer form={form} values={record.values} history={{}} disabled onChange={() => undefined} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="safety-status-banner"><ShieldCheck size={18} /><div><strong>{projectionOriginLabel(projection.origin, projection.status)}</strong><span>{projection.warnings.length ? projection.warnings.join(" ") : "Read-only values use exact completed Form 8 dates and same-date Form 9 slots. Negative deltas are retained and flagged for review."}</span></div></div></>}</div>;
+  return <div className="page-stack"><div className="form-page-header"><div><Link className="back-link" to="/"><ArrowLeft size={16} /> Back to forms</Link><div className="eyebrow">Form {form.number} · read-only projection</div><h1>{form.name}</h1><p>{form.description}</p></div></div><div className="metadata-panel"><label className="metadata-field"><span>Plant date</span><input type="date" value={date} onChange={e => setDate(e.target.value)} /></label><div className="metadata-field"><span>Projection status</span><div className={`notice ${projection.status === "current" ? "" : "warning"}`}><ShieldCheck size={17} /> {projectionOriginLabel(projection.origin, projection.status)}</div></div></div>{message && <div className="notice warning"><CircleAlert size={18} />{message}</div>}{!record ? <div className="empty-state"><h2>{busy ? "Loading…" : "Waiting"}</h2><p>Exact completed Form 8 source dates are required. Server projection fallback is used when this tablet has no local source override.</p></div> : <><FormRenderer form={form} values={record.values} history={history} disabled onChange={() => undefined} onTrend={key => navigate(`/trends/${formKey}/${key}`)} readOnlyDisplay /><div className="safety-status-banner"><ShieldCheck size={18} /><div><strong>{projectionOriginLabel(projection.origin, projection.status)}</strong><span>{projection.warnings.length ? projection.warnings.join(" ") : "Read-only values use exact completed Form 8 dates and same-date Form 9 slots. Negative deltas are retained and flagged for review."}</span></div></div></>}</div>;
 }
 export function FormEntryPage() {
   const {
@@ -247,7 +270,11 @@ export function FormEntryPage() {
             }
           } else if (matching[0]) loaded = matching[0];
         }
-        if (!loaded) {
+         if (loaded && formKey === "boiler-water-control-tests" && loaded.status === "draft" && loaded.formVersion === 3) {
+           const upgraded = upgradeForm2WorkingValues(loaded.formVersion, loaded.values);
+           loaded = await saveLocalEntry({ ...loaded, formVersion: upgraded.formVersion, values: upgraded.values });
+         }
+         if (!loaded) {
           loaded = newLocalEntry(formKey, plantDate);
           setIsNewEntry(true);
         }
@@ -437,9 +464,7 @@ export function FormEntryPage() {
         ...e.values,
         [key]: value
       };
-      if (formKey === "boiler-water-control-tests" && (key === "p_alk_burette" || key === "m_alk_burette")) {
-        values.p_alk = typeof values.p_alk_burette === "number" ? values.p_alk_burette * 20 : null;
-        values.m_alk = typeof values.m_alk_burette === "number" ? values.m_alk_burette * 20 : null;
+      if (formKey === "boiler-water-control-tests" && (key === "p_alk" || key === "m_alk")) {
         values.oh_alk = calculateOhAlk(values.p_alk, values.m_alk);
       }
       return {
@@ -515,6 +540,10 @@ export function FormEntryPage() {
     const current = entryRef.current;
     if (!current) return;
     const edit = beginTemporaryEdit(current);
+    if (formKey === "boiler-water-control-tests" && (edit.working.formVersion === 3 || "p_alk_burette" in edit.working.values || "m_alk_burette" in edit.working.values)) {
+      const upgraded = upgradeForm2WorkingValues(3, edit.working.values);
+      edit.working = { ...edit.working, formVersion: upgraded.formVersion, values: upgraded.values };
+    }
     editBaselineRef.current = edit.baseline;
     replacementTargetRef.current = null;
     entryRef.current = edit.working;
@@ -555,7 +584,11 @@ export function FormEntryPage() {
       await saveChain.current;
       const current = entryRef.current;
       if (!current) return;
-      const replacement = prepareTemporaryReplacement(current,duplicate);
+       const replacement = prepareTemporaryReplacement(current,duplicate);
+       if (formKey === "boiler-water-control-tests" && (replacement.working.formVersion === 3 || "p_alk_burette" in replacement.working.values || "m_alk_burette" in replacement.working.values)) {
+         const upgraded = upgradeForm2WorkingValues(3, replacement.working.values);
+         replacement.working = { ...replacement.working, formVersion: upgraded.formVersion, values: upgraded.values };
+       }
       editBaselineRef.current = replacement.baseline;
       replacementTargetRef.current = replacement.target;
       setDuplicate(null);
@@ -602,7 +635,8 @@ export function FormEntryPage() {
   if (!entry) return <div className="loading-card">Loading form…</div>;
   const locked = entry.status === "completed" && !entry.temporaryEdit;
   const contextLocked = locked || Boolean(replacementTargetRef.current);
-  const missing = isNewEntry && !locked ? missingMetadata(form, entry) : [];
+   const missing = isNewEntry && !locked ? missingMetadata(form, entry) : [];
+   const renderValues = formKey === "boiler-water-control-tests" ? form2DisplayValues(entry.values) : entry.values;
   const metadataLocked = missing.length > 0;
   return <div className="page-stack">{toast && <div className="toast-stack" aria-live="polite" aria-atomic="true"><div className="toast success" role="status"><span className="toast-icon"><Check size={18} /></span><span>{toast}</span><button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => {
     if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
@@ -642,7 +676,7 @@ export function FormEntryPage() {
             ...e.values,
             ...vals
           }
-        }))} />}<FormRenderer form={form} values={entry.values} history={history} disabled={locked} derivedValues={formKey === "integrator-readings" ? form8OatExtremes.values : form2Totals.values} pendingFieldKeys={form2Totals.status === "waiting" ? [...FORM2_DAILY_TOTAL_KEYS] : []} hiddenFieldKeys={formKey === "integrator-readings" ? (form8OatExtremes.status === "hidden" ? [...FORM8_OAT_EXTREME_KEYS] : []) : (form2Totals.status === "hidden" ? [...FORM2_DAILY_TOTAL_KEYS] : [])} onChange={updateValue} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="form-bottom-bar"><div><div style={{
+         }))} />}<FormRenderer form={form} values={renderValues} history={history} disabled={locked} derivedValues={formKey === "integrator-readings" ? form8OatExtremes.values : form2Totals.values} pendingFieldKeys={form2Totals.status === "waiting" ? [...FORM2_DAILY_TOTAL_KEYS] : []} hiddenFieldKeys={formKey === "integrator-readings" ? (form8OatExtremes.status === "hidden" ? [...FORM8_OAT_EXTREME_KEYS] : []) : (form2Totals.status === "hidden" ? [...FORM2_DAILY_TOTAL_KEYS] : [])} onChange={updateValue} onTrend={key => navigate(`/trends/${formKey}/${key}`)} /><div className="form-bottom-bar"><div><div style={{
               fontWeight: 700,
               color: entry.storageError ? "var(--error)" : "var(--success)"
             }}>{entry.storageError ? "Not durably saved" : entry.temporaryEdit ? "Temporary changes not saved" : "Saved on this tablet"}</div><div className="history-empty">{entry.temporaryEdit ? "Press Complete to save and queue this replacement" : `${savedAt ? new Date(savedAt).toLocaleTimeString() : "Autosave begins with the first change"} · ${entry.status === "completed" ? "Completed locally" : "Draft"}`}</div></div><div className="form-bottom-actions">{entry.temporaryEdit && <button className="secondary-button" disabled={busy} onClick={() => void cancelEdit()}><X size={17} /> Cancel</button>}{!locked && <><button className="secondary-button" disabled={busy || Boolean(entry.storageError) || entry.temporaryEdit} onClick={() => void submit("draft")}><Save size={17} /> Keep draft</button><button className="primary-button" disabled={busy || Boolean(entry.storageError) || completeLocked} onClick={() => void submit("complete")}><Check size={17} /> Complete</button></>}</div></div></div>{duplicate && <div className="confirmation-backdrop"><div className="confirmation-dialog"><div className="confirmation-heading"><CircleAlert /><div><h2>This context is already occupied</h2><p>{duplicate.formKey} · {duplicate.context.date}{duplicate.context.shift ? ` · ${duplicate.context.shift}` : ""}{duplicate.context.timeSlot ? ` · ${duplicate.context.timeSlot}` : ""}{duplicate.context.boilerNumber ? ` · ${duplicate.context.boilerNumber}` : ""}</p><p>{entry.status === "draft" ? "Open existing discards this draft attempt. " : ""}Replace keeps these values temporary until Complete; Cancel, navigation, or reload discards them.</p></div></div><div className="confirmation-actions"><button className="secondary-button" disabled={busy} onClick={() => void openExisting()}>Open existing</button><button className="primary-button" disabled={busy} onClick={() => {

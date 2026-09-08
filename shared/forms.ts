@@ -51,7 +51,7 @@ export const FORMS: FormDefinition[] = [
   {
     key: "boiler-water-control-tests",
     number: 2,
-    version: 3,
+    version: 4,
     name: "Boiler Water Control Tests",
     backupWorksheetName: "02 Boiler Water",
     schedule: "shift",
@@ -59,10 +59,8 @@ export const FORMS: FormDefinition[] = [
     hasBoiler: true,
     sections: [
       section("chemistry", "Boiler Chemistry", [
-        n("p_alk_burette", "P-ALK Burette Reading", { trendable: false, showHistory: false, recordVisible: false }),
-        n("p_alk", "P-ALK", { target: range("350–600", 350, 600), calculated: true }),
-        n("m_alk_burette", "M-ALK Burette Reading", { trendable: false, showHistory: false, recordVisible: false }),
-        n("m_alk", "M-ALK", { target: range("400–800", 400, 800), calculated: true }),
+        n("p_alk", "P-ALK", { target: range("350–600", 350, 600) }),
+        n("m_alk", "M-ALK", { target: range("400–800", 400, 800) }),
         n("oh_alk", "OH-ALK", { target: range("200–600", 200, 600), calculated: true, helpText: "Calculated: (P-ALK × 2) - M-ALK" }),
         n("blr_cond", "BLR COND", { target: range("3700–4200", 3700, 4200) }),
         n("sulfite", "SULFITE", { target: range("30–60", 30, 60) }),
@@ -178,8 +176,8 @@ export const FORMS: FormDefinition[] = [
     description: "Read-only local-first projection from exact completed Form 8 dates, with the canonical server projection as fallback.",
     sections: [
       section("weather", "Outside Air Temperature", [
-        n("oat_high", "OAT High", { calculated: true }),
-        n("oat_low", "OAT Low", { calculated: true }),
+        n("oat_high", "OAT High", { unit: "°F", calculated: true }),
+        n("oat_low", "OAT Low", { unit: "°F", calculated: true }),
       ]),
       section("boiler-2", "Boiler 2", [
         n("boiler2_gas_used", "Gas Used", { calculated: true }),

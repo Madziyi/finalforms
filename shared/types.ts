@@ -97,6 +97,8 @@ export type CommandReceipt = {
 /** The v2 local-first upload contract. Drafts never use this contract. */
 export type CompletedRecordUpload = {
   protocolVersion: number;
+  /** Form contract version captured when the completed snapshot was queued. */
+  formVersion?: number;
   record: CanonicalRecord & { lifecycle: "completed" };
   /** Stable idempotency key for this exact queued snapshot. */
   syncId?: string;

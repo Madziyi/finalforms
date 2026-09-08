@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { canonicalRecordId } from "../../shared/canonical";
 import { deriveForm8OatExtrema } from "../../shared/form8Oat";
+import { allFields, getForm } from "../../shared/forms";
 import { calculateForm5And6 } from "../../shared/formulas";
 import { nextCalendarDate, normalizeContext, shiftMeasuredAt, TIME_SLOTS } from "../../shared/safetyContract";
 import type { CanonicalRecord, Values } from "../../shared/types";
@@ -42,12 +43,14 @@ export type DerivedTrendPoint = {
   numeric_value: number;
 };
 
-type ResolverOptions = {
+export type ResolverOptions = {
   online?: boolean;
   signal?: AbortSignal;
   localForm8?: readonly LocalEntry[];
   localForm9?: readonly LocalEntry[];
   cloudProjection?: CanonicalRecord | null;
+  cloudProjections?: readonly CanonicalRecord[];
+  fetchProjectionList?: (formKey: string, signal?: AbortSignal) => Promise<CanonicalRecord[]>;
   fetchProjection?: (formKey: string, plantDate: string, signal?: AbortSignal) => Promise<CanonicalRecord | null>;
   fetchSources?: (formKey: string, plantDate: string, signal?: AbortSignal) => Promise<CanonicalRecord[]>;
 };
@@ -213,6 +216,20 @@ function resolvedFromCloud(record: CanonicalRecord): ResolvedDerivedProjection {
   };
 }
 
+function withResolvedOat(record: CanonicalRecord, oatSources: readonly ProjectionSource[]): ResolvedDerivedProjection {
+  const oat = deriveForm8OatExtrema(oatSources.map(source => ({ date: source.date, timeSlot: source.timeSlot, values: source.values, status: "completed", lifecycle: "completed" })), record.date, "oat_memorial");
+  const provenance = record.provenance ?? {};
+  const warnings = Array.isArray(provenance.warnings) ? provenance.warnings.filter((warning): warning is string => typeof warning === "string") : [];
+  const status: ProjectionStatus = provenance.status === "current" && record.lifecycle === "completed" ? "current" : "waiting";
+  return {
+    record: { ...record, values: { ...record.values, oat_high: oat.values.oat_high ?? null, oat_low: oat.values.oat_low ?? null }, provenance: { ...provenance, source: "local-first-projection", origin: "cloud", status, warnings, sourceContexts: oatSources.map(sourceSummary) } },
+    origin: "cloud",
+    status,
+    warnings,
+    sources: oatSources.map(sourceSummary),
+  };
+}
+
 async function defaultFetchProjection(formKey: string, plantDate: string, signal?: AbortSignal) {
   const id = canonicalRecordId(formKey, plantDate);
   const authenticated = Boolean(getDeviceToken());
@@ -264,7 +281,13 @@ export async function resolveDerivedProjection(formKey: string, plantDate: strin
         cloudProjection = null;
       }
     }
-    if (cloudProjection) return resolvedFromCloud(cloudProjection);
+    if (cloudProjection) {
+      if (formKey !== FORM5) return resolvedFromCloud(cloudProjection);
+      let remoteOat: CanonicalRecord[] = [];
+      try { remoteOat = await fetchSources(FORM9, plantDate, options.signal); } catch (error) { throwIfAborted(options.signal); }
+      const oatSources = eligibleCloud(remoteOat, FORM9, plantDate);
+      return oatSources.length ? withResolvedOat(cloudProjection, oatSources) : resolvedFromCloud(cloudProjection);
+    }
   }
 
   let remoteCurrent: CanonicalRecord[] = [];
@@ -340,8 +363,12 @@ export async function listResolvedDerivedProjections(formKey: string, options: R
   let cloudRecords: CanonicalRecord[] = [];
   if (online) {
     try {
-      const result = getDeviceToken() ? await listRecords(formKey, undefined, options.signal) : await listPublicRecords(formKey, undefined, options.signal);
-      cloudRecords = result.records;
+      if (options.cloudProjections) cloudRecords = [...options.cloudProjections];
+      else if (options.fetchProjectionList) cloudRecords = await options.fetchProjectionList(formKey, options.signal);
+      else {
+        const result = getDeviceToken() ? await listRecords(formKey, undefined, options.signal) : await listPublicRecords(formKey, undefined, options.signal);
+        cloudRecords = result.records;
+      }
     } catch (error) {
       throwIfAborted(options.signal);
     }
@@ -361,6 +388,36 @@ export async function listResolvedDerivedProjections(formKey: string, options: R
     if (result.record) resolved.push(result);
   }
   return resolved;
+}
+
+export type DerivedHistoryMap = Record<string, DerivedTrendPoint[]>;
+
+/** Resolves calculated projection history relative to the selected date. */
+export async function resolveDerivedHistory(formKey: string, beforeDate: string, options: ResolverOptions = {}): Promise<DerivedHistoryMap> {
+  if (formKey !== FORM5 && formKey !== FORM6) throw new Error(`Unsupported derived form: ${formKey}`);
+  throwIfAborted(options.signal);
+  const form = getForm(formKey)!;
+  const fields = allFields(form).filter(field => field.trendable && (field.type === "number" || field.type === "computed")).map(field => field.key);
+  const resolved = await listResolvedDerivedProjections(formKey, options);
+  const history: DerivedHistoryMap = Object.fromEntries(fields.map(field => [field, []]));
+  const seen = new Map<string, Set<string>>();
+  for (const field of fields) seen.set(field, new Set());
+  for (const result of resolved) {
+    const record = result.record;
+    if (!record || result.status !== "current" || record.date >= beforeDate) continue;
+    const point = { aggregate_id: canonicalRecordId(formKey, record.date), plant_date: record.date, measured_at: `${record.date}T23:59:00`, numeric_value: 0 };
+    for (const field of fields) {
+      const value = record.values[field];
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      const key = point.aggregate_id;
+      if (seen.get(field)!.has(key)) continue;
+      seen.get(field)!.add(key);
+      history[field].push({ ...point, numeric_value: value });
+    }
+  }
+  for (const points of Object.values(history)) points.sort((a, b) => b.measured_at.localeCompare(a.measured_at));
+  for (const field of fields) history[field] = history[field].slice(0, 5);
+  return history;
 }
 
 export async function derivedTrendPoints(formKey: string, fieldKey: string, options: TrendOptions = {}) {
@@ -390,8 +447,22 @@ export async function derivedTrendPoints(formKey: string, fieldKey: string, opti
     const value = result.record?.values[fieldKey];
     if (result.record && typeof value === "number" && Number.isFinite(value)) localPoints.push({ aggregate_id: result.record.aggregateId, plant_date: date, measured_at: `${date}T23:59:00`, numeric_value: value });
   }
-  if (remoteError && !localPoints.length) throw remoteError;
+  let resolvedPoints: DerivedTrendPoint[] = [];
+  if (online) {
+    try {
+      const projections = await listResolvedDerivedProjections(formKey, { ...options, online, localForm8, localForm9 });
+      resolvedPoints = projections.flatMap(result => {
+        if (!result.record || result.status !== "current") return [];
+        const value = result.record.values[fieldKey];
+        return typeof value === "number" && Number.isFinite(value) ? [{ aggregate_id: result.record.aggregateId, plant_date: result.record.date, measured_at: `${result.record.date}T23:59:00`, numeric_value: value }] : [];
+      });
+    } catch (error) {
+      throwIfAborted(options.signal);
+    }
+  }
+  if (remoteError && !localPoints.length && !resolvedPoints.length) throw remoteError;
   const merged = new Map(remotePoints.map(point => [point.aggregate_id, point]));
+  for (const point of resolvedPoints) merged.set(point.aggregate_id, point);
   for (const point of localPoints) merged.set(point.aggregate_id, point);
   return [...merged.values()].sort((a, b) => b.measured_at.localeCompare(a.measured_at)).slice(0, 365);
 }

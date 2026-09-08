@@ -16,20 +16,12 @@ describe("backup/form manifest", () => {
     expect(form6.schedule).toBe("derived");
     expect(allFields(form6).map((field) => field.key)).toEqual(["cw_makeup_current","cw_makeup_used","tower_makeup_current"]);
   });
-  it("defines OH-ALK as calculated and not operator-editable", () => {
+  it("defines direct P/M entry and calculated OH-ALK for the current Form 2 contract", () => {
     const form2 = FORMS.find((form) => form.number === 2)!;
-    const pRaw = allFields(form2).find((field) => field.key === "p_alk_burette")!;
-    const mRaw = allFields(form2).find((field) => field.key === "m_alk_burette")!;
-    expect(pRaw.label).toBe("P-ALK Burette Reading");
-    expect(mRaw.label).toBe("M-ALK Burette Reading");
-    expect(pRaw.trendable).toBe(false);
-    expect(pRaw.showHistory).toBe(false);
-    expect(pRaw.recordVisible).toBe(false);
-    expect(mRaw.trendable).toBe(false);
-    expect(mRaw.showHistory).toBe(false);
-    expect(mRaw.recordVisible).toBe(false);
-    expect(allFields(form2).find((field) => field.key === "p_alk")?.calculated).toBe(true);
-    expect(allFields(form2).find((field) => field.key === "m_alk")?.calculated).toBe(true);
+    expect(form2.version).toBe(4);
+    expect(allFields(form2).map((field) => field.key)).not.toEqual(expect.arrayContaining(["p_alk_burette", "m_alk_burette"]));
+    expect(allFields(form2).find((field) => field.key === "p_alk")?.calculated).not.toBe(true);
+    expect(allFields(form2).find((field) => field.key === "m_alk")?.calculated).not.toBe(true);
     const oh = allFields(form2).find((field) => field.key === "oh_alk")!;
     expect(oh.calculated).toBe(true);
   });

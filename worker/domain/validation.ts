@@ -44,7 +44,8 @@ function valuePresent(field: FieldDefinition, value: FieldValue | undefined) {
 export function validateFormValues(formKey: string, formVersion: number, context: ContextInput, rawValues: unknown): { values: Values; contextKey: string } {
   const form = getForm(formKey);
   if (!form) throw new DomainError("unknown_form", "Unknown form.");
-  if (formVersion !== form.version) throw new DomainError("form_version", `Form version ${form.version} is required.`, 409);
+  const legacyForm2 = formKey === "boiler-water-control-tests" && formVersion === 3;
+  if (formVersion !== form.version && !legacyForm2) throw new DomainError("form_version", `Form version ${form.version} is required.`, 409);
   if (form.schedule === "derived") {
     throw new DomainError("derived_readonly", "Derived forms are server-owned.", 409);
   }
@@ -55,19 +56,27 @@ export function validateFormValues(formKey: string, formVersion: number, context
   catch (error) { throw new DomainError("invalid_context", error instanceof Error ? error.message : String(error)); }
 
   const allowed = new Map(allFields(form).map((f) => [f.key, f]));
+  if (legacyForm2) {
+    allowed.set("p_alk_burette", { key: "p_alk_burette", label: "P-ALK Burette Reading", type: "number" });
+    allowed.set("m_alk_burette", { key: "m_alk_burette", label: "M-ALK Burette Reading", type: "number" });
+  }
   const values: Values = {};
   for (const [key, value] of Object.entries(rawValues)) {
     const field = allowed.get(key);
     if (!field) throw new DomainError("unknown_field", `Unknown field ${key}.`);
-    if (field.calculated && formKey === "boiler-water-control-tests" && ["p_alk", "m_alk", "oh_alk"].includes(key)) continue;
+    if (field.calculated && formKey === "boiler-water-control-tests" && (legacyForm2 || key === "oh_alk")) continue;
     validateFieldValue(field, value);
     values[key] = value as FieldValue;
   }
-  if (formKey === "boiler-water-control-tests") {
+  if (legacyForm2) {
     const pBurette = values.p_alk_burette;
     const mBurette = values.m_alk_burette;
     values.p_alk = isFiniteNumber(pBurette) ? pBurette * 20 : null;
     values.m_alk = isFiniteNumber(mBurette) ? mBurette * 20 : null;
+    values.oh_alk = calculateOhAlk(values.p_alk, values.m_alk);
+    delete values.p_alk_burette;
+    delete values.m_alk_burette;
+  } else if (formKey === "boiler-water-control-tests") {
     values.oh_alk = calculateOhAlk(values.p_alk, values.m_alk);
   }
 

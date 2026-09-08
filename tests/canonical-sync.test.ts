@@ -193,11 +193,23 @@ describe("canonical sync race safety", () => {
     expect([...db.observations.values()].some((row) => row.field_key === "p_alk_burette" || row.field_key === "m_alk_burette")).toBe(false);
   });
 
-  it("recomputes all alkalinity results from raw burette readings", () => {
+  it("accepts the narrow version-3 queue compatibility shape and removes obsolete keys", () => {
     const result = validateCompletedUpload(upload({
       values: { p_alk_burette: 12, m_alk_burette: 15, p_alk: 1, m_alk: 2, oh_alk: 3 },
     }));
-    expect(result.record.values).toMatchObject({ p_alk_burette: 12, m_alk_burette: 15, p_alk: 240, m_alk: 300, oh_alk: 180 });
+    expect(result.record.values).toMatchObject({ p_alk: 240, m_alk: 300, oh_alk: 180 });
+    expect(result.record.values).not.toHaveProperty("p_alk_burette");
+    expect(result.record.values).not.toHaveProperty("m_alk_burette");
+  });
+
+  it("accepts direct version-4 P/M and recomputes forged OH without legacy keys", () => {
+    const result = validateCompletedUpload(upload({ values: { p_alk: 500, m_alk: 600, oh_alk: 999 } }, { formVersion: 4 }));
+    expect(result.record.values).toEqual({ p_alk: 500, m_alk: 600, oh_alk: 400 });
+  });
+
+  it("keeps current-version validation strict for obsolete Form 2 fields and other forms", () => {
+    expect(() => validateCompletedUpload(upload({ values: { p_alk_burette: 12, m_alk_burette: 15 } }, { formVersion: 4 }))).toThrow("Unknown field");
+    expect(() => validateCompletedUpload(upload({ formKey: "ecc-cooling-tower-water-control-tests", aggregateId: canonicalRecordId("ecc-cooling-tower-water-control-tests", { date: "2026-09-03", shift: "Day" }), shift: "Day", boilerNumber: null, values: { conductivity: 1150 } }, { formVersion: 4 }))).toThrow("Form version");
   });
 
   it("indexes each paired Pump Sp/St component for a combined previous measurement", async () => {

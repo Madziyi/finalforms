@@ -8,6 +8,7 @@ import { displayNumber } from "../lib/format";
 import { resolveForm2DailyTotals } from "../lib/form2DailyTotals";
 import { resolveForm8OatExtrema } from "../lib/form8OatExtrema";
 import { getDerivedProjectionDate, projectionOriginLabel, resolveDerivedProjection, type ResolvedDerivedProjection } from "../lib/derivedProjections";
+import { form2DisplayValues } from "../lib/form2Values";
 import { loadLocalEntry, localEntryToRecord } from "../lib/offlineDb";
 import type { CanonicalRecord, FieldValue } from "../types";
 const FORM8_OAT_EXTREME_KEYS = ["oat_high", "oat_low"] as const;
@@ -114,13 +115,14 @@ export function RecordViewPage() {
   if (message) return <div className="page-stack"><div className="notice error">{message}</div><Link className="secondary-button inline" to={`/data/${form.key}`}><ArrowLeft size={16} /> Back to entries</Link></div>;
   if (!record) return <div className="loading-card">Loading entry…</div>;
   const extraKeys = Object.keys(record.values).filter(key => !fieldMap.has(key) && !key.startsWith("_"));
+  const displayValues = formKey === "boiler-water-control-tests" ? form2DisplayValues(record.values) : record.values;
   return <div className="page-stack record-view">
     <div className="form-page-header"><div><Link to={`/data/${form.key}`} className="back-link"><ArrowLeft size={17} /> Back to entries</Link><div className="eyebrow">Historical entry</div><h1>{form.name}</h1><p>{contextLabel(record)}</p></div></div>
     {form.schedule === "derived" && projection && <div className={`notice ${projection.status === "current" ? "" : "warning"}`}>{projectionOriginLabel(projection.origin, projection.status)}{projection.warnings.length ? ` · ${projection.warnings.join(" ")}` : ""}</div>}
     {form.sections.map(section => {
       const isForm2OperatingSection = formKey === "boiler-water-control-tests" && section.key === "operating";
       const isForm8WeatherSection = formKey === "integrator-readings" && section.key === "weather";
-      const displayedFields = section.fields.filter(field => field.recordVisible !== false).filter(field => !isForm2OperatingSection || !["steam_total", "makeup_total"].includes(field.key)).filter(field => !isForm8WeatherSection || !FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number])).filter(field => Boolean(valueLabel(record.values[field.key])));
+      const displayedFields = section.fields.filter(field => field.recordVisible !== false).filter(field => !isForm2OperatingSection || !["steam_total", "makeup_total"].includes(field.key)).filter(field => !isForm8WeatherSection || !FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number])).filter(field => Boolean(valueLabel(displayValues[field.key])));
       const derivedFields = isForm2OperatingSection && form2Totals.status !== "hidden" ? section.fields.filter(field => field.recordVisible !== false && ["steam_total", "makeup_total"].includes(field.key)) : [];
       const form8DerivedFields = isForm8WeatherSection && form8OatExtremes.status !== "hidden" ? section.fields.filter(field => FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number])) : [];
       const fields = [...displayedFields, ...derivedFields, ...form8DerivedFields];
@@ -129,7 +131,7 @@ export function RecordViewPage() {
         } as CSSProperties}>{fields.map(field => {
             const isDerivedTotal = ["steam_total", "makeup_total"].includes(field.key);
             const isDerivedOat = FORM8_OAT_EXTREME_KEYS.includes(field.key as typeof FORM8_OAT_EXTREME_KEYS[number]);
-            const value = isDerivedTotal ? form2Totals.values[field.key] : isDerivedOat ? form8OatExtremes.values[field.key] : record.values[field.key];
+            const value = isDerivedTotal ? form2Totals.values[field.key] : isDerivedOat ? form8OatExtremes.values[field.key] : displayValues[field.key];
             const display = valueLabel(value);
             return <div className="detail-value" key={field.key}><span>{field.label}</span><div><strong>{isDerivedTotal && form2Totals.status === "waiting" ? "Waiting for daily totals" : `${display}${field.unit ? ` ${field.unit}` : ""}`}</strong>{field.trendable && typeof value === "number" && <Link to={`/trends/${form.key}/${field.key}`}><LineChart size={16} /> Trend</Link>}</div></div>;
           })}</div></section>;

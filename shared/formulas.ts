@@ -1,6 +1,6 @@
 import type { Values } from "./types";
 
-export const DERIVED_FORMULA_VERSION = 1;
+export const DERIVED_FORMULA_VERSION = 2;
 
 function number(values: Values, key: string): number | null {
   const value = values[key];
@@ -20,6 +20,23 @@ function ratio(numerator: number | null, denominator: number | null) {
 function sumAvailable(values: Array<number | null>) {
   const numbers = values.filter((value): value is number => value != null);
   return numbers.length ? numbers.reduce((sum, value) => sum + value, 0) : null;
+}
+
+type DeltaResult = { value: number | null; state: "absent" | "complete" | "incomplete" };
+
+function completeDelta(current: number | null, previous: number | null, label: string, currentDate: string, previousDate: string, warnings: string[]): DeltaResult {
+  if (current == null && previous == null) return { value: null, state: "absent" };
+  if (current == null) {
+    warnings.push(`${label}: current exact-date reading is missing on ${currentDate}.`);
+    return { value: null, state: "incomplete" };
+  }
+  if (previous == null) {
+    warnings.push(`${label}: previous exact-date reading is missing on ${previousDate}.`);
+    return { value: null, state: "incomplete" };
+  }
+  const value = current - previous;
+  if (value < 0) warnings.push(`${label}: current cumulative reading is below the previous calendar-date reading.`);
+  return { value, state: "complete" };
 }
 
 export function calculateOhAlk(pAlk: unknown, mAlk: unknown): number | null {
@@ -42,25 +59,26 @@ export function calculateForm5And6(input: {
   if (!hasCurrent) warnings.push(`Waiting for completed Form 8 on ${currentDate}.`);
   if (!hasPrevious) warnings.push(`Waiting for completed Form 8 on previous calendar date ${previousDate}.`);
 
-  const b3Gas = delta(number(currentValues,"gas_boiler3"), number(previousValues,"gas_boiler3"), "Boiler 3 gas", warnings);
-  const b3Steam = delta(number(currentValues,"steam_boiler3"), number(previousValues,"steam_boiler3"), "Boiler 3 steam", warnings);
-  const b4Gas = delta(number(currentValues,"gas_boiler4"), number(previousValues,"gas_boiler4"), "Boiler 4 gas", warnings);
-  const b4Steam = delta(number(currentValues,"steam_boiler4"), number(previousValues,"steam_boiler4"), "Boiler 4 steam", warnings);
+  const b3Gas = completeDelta(number(currentValues,"gas_boiler3"), number(previousValues,"gas_boiler3"), "Boiler 3 gas", currentDate, previousDate, warnings);
+  const b3Steam = completeDelta(number(currentValues,"steam_boiler3"), number(previousValues,"steam_boiler3"), "Boiler 3 steam", currentDate, previousDate, warnings);
+  const b4Gas = completeDelta(number(currentValues,"gas_boiler4"), number(previousValues,"gas_boiler4"), "Boiler 4 gas", currentDate, previousDate, warnings);
+  const b4Steam = completeDelta(number(currentValues,"steam_boiler4"), number(previousValues,"steam_boiler4"), "Boiler 4 steam", currentDate, previousDate, warnings);
   const makeup = delta(number(currentValues,"hotwell_makeup"), number(previousValues,"hotwell_makeup"), "Hotwell makeup", warnings);
   const b2Steam = number(currentValues,"steam_boiler2");
-  const totalSteam = dependencyStatus === "current" ? sumAvailable([b2Steam,b3Steam,b4Steam]) : null;
+  const steamDeltasComplete = b3Steam.state !== "incomplete" && b4Steam.state !== "incomplete";
+  const totalSteam = dependencyStatus === "current" && steamDeltasComplete ? sumAvailable([b2Steam,b3Steam.value,b4Steam.value]) : null;
 
   const form5: Values = {
     oat_high: number(currentValues,"oat_high"),
     oat_low: number(currentValues,"oat_low"),
     boiler2_gas_used: number(currentValues,"gas_boiler2"),
     boiler2_steam_used: b2Steam,
-    boiler3_gas_used: dependencyStatus === "current" ? b3Gas : null,
-    boiler3_steam_used: dependencyStatus === "current" ? b3Steam : null,
-    boiler3_lbs_steam_per_cuft_gas: dependencyStatus === "current" ? ratio(b3Steam,b3Gas) : null,
-    boiler4_gas_used: dependencyStatus === "current" ? b4Gas : null,
-    boiler4_steam_used: dependencyStatus === "current" ? b4Steam : null,
-    boiler4_lbs_steam_per_cuft_gas: dependencyStatus === "current" ? ratio(b4Steam,b4Gas) : null,
+    boiler3_gas_used: dependencyStatus === "current" ? b3Gas.value : null,
+    boiler3_steam_used: dependencyStatus === "current" ? b3Steam.value : null,
+    boiler3_lbs_steam_per_cuft_gas: dependencyStatus === "current" ? ratio(b3Steam.value,b3Gas.value) : null,
+    boiler4_gas_used: dependencyStatus === "current" ? b4Gas.value : null,
+    boiler4_steam_used: dependencyStatus === "current" ? b4Steam.value : null,
+    boiler4_lbs_steam_per_cuft_gas: dependencyStatus === "current" ? ratio(b4Steam.value,b4Gas.value) : null,
     total_steam: totalSteam,
     average_flow_hr: totalSteam == null ? null : totalSteam / 24,
     makeup_water_gallon: dependencyStatus === "current" ? makeup : null,

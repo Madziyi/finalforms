@@ -34,7 +34,7 @@ describe("legacy canonical backfill dry-run transformation", () => {
     expect(result.anomalies.map((anomaly) => anomaly.kind)).toContain("unknown_field");
   });
 
-  it("reconstructs Form 2 burette/P/M/OH values and drops legacy derived totals", () => {
+  it("reconstructs Form 2 direct P/M/OH values and drops legacy derived totals", () => {
     const result = transformLegacyRows([row({
       aggregate_id: "legacy-form2",
       form_key: "boiler-water-control-tests",
@@ -45,7 +45,9 @@ describe("legacy canonical backfill dry-run transformation", () => {
     })]);
     const candidate = result.candidates[0];
     expect(candidate.canonical_id).toBe("F02-2026-09-07-1-3");
-    expect(candidate.values).toMatchObject({ p_alk_burette: 25, m_alk_burette: 30, p_alk: 500, m_alk: 600, oh_alk: 400, blr_cond: 3900 });
+    expect(candidate.values).toMatchObject({ p_alk: 500, m_alk: 600, oh_alk: 400, blr_cond: 3900 });
+    expect(candidate.values).not.toHaveProperty("p_alk_burette");
+    expect(candidate.values).not.toHaveProperty("m_alk_burette");
     expect(candidate.values).not.toHaveProperty("steam_total");
     expect(candidate.values).not.toHaveProperty("makeup_total");
     expect(result.anomalies.filter((anomaly) => anomaly.disposition === "accepted")).toHaveLength(3);

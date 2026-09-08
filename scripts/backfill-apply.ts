@@ -181,7 +181,7 @@ function verifyExpected(response: unknown, scope: string) {
   const pump = JSON.parse(String(special.find((row) => row.canonical_id === "F01-2026-09-05-1")?.values_json ?? "{}"));
   if (pump.pump_sp_st?.first !== 75 || pump.pump_sp_st?.second !== 60) throw new Error(scope + ": forced Pump Sp/St value is incorrect.");
   const form2 = JSON.parse(String(special.find((row) => row.canonical_id === "F02-2026-09-02-1-2")?.values_json ?? "{}"));
-  if (form2.p_alk_burette !== 32.6 || form2.m_alk_burette !== 36.6 || form2.p_alk !== 652 || form2.m_alk !== 732 || form2.oh_alk !== 572) throw new Error(scope + ": Form 2 business-rule reconstruction is incorrect.");
+  if (form2.p_alk !== 652 || form2.m_alk !== 732 || form2.oh_alk !== 572 || "p_alk_burette" in form2 || "m_alk_burette" in form2) throw new Error(scope + ": Form 2 direct P/M reconstruction is incorrect.");
   return { scope, rows };
 }
 export function runLocalSmoke(sqlText: string, outputDir: string) {
