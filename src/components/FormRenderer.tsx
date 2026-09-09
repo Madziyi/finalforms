@@ -2,6 +2,7 @@ import { LineChart } from "lucide-react";
 import { useState } from "react";
 import type { FieldDefinition, FieldValue, FormDefinition, Values } from "../types";
 import { NumericField } from "./NumericField";
+import { FormattedNumberInput } from "./FormattedNumberInput";
 import { TrendModal } from "./TrendModal";
 import { displayNumber, measurementLabel } from "../lib/format";
 export type HistoryMap = Record<string, Array<{
@@ -75,9 +76,9 @@ function GenericField({
       first: null,
       second: null
     };
-    return <div className="generic-field paired-field"><div><span className="field-title">{field.label}</span></div><div className="paired-inputs">{(["first", "second"] as const).map((key, i) => <span className="paired-input" key={key}><label><span>{field.pairedLabels?.[i] ?? key}</span><input type="number" step="any" disabled={disabled} value={pair[key] ?? ""} onChange={e => onChange({
+    return <div className="generic-field paired-field"><div><span className="field-title">{field.label}</span></div><div className="paired-inputs">{(["first", "second"] as const).map((key, i) => <span className="paired-input" key={key}><label><span>{field.pairedLabels?.[i] ?? key}</span><FormattedNumberInput value={pair[key]} disabled={disabled} onChange={nextValue => onChange({
               ...pair,
-              [key]: e.target.value === "" ? null : Number(e.target.value)
+              [key]: nextValue
             })} /></label>{i === 0 && <strong aria-hidden="true">/</strong>}</span>)}</div><PairedHistory field={field} history={history} historyMode={historyMode} /></div>;
   }
   if (field.type === "duration") {
@@ -104,8 +105,7 @@ export function FormRenderer({
   allowCalculatedEdits = false,
   derivedValues = {},
   pendingFieldKeys = [],
-  hiddenFieldKeys = [],
-  readOnlyDisplay = false
+  hiddenFieldKeys = []
 }: {
   form: FormDefinition;
   values: Values;
@@ -117,7 +117,6 @@ export function FormRenderer({
   derivedValues?: Values;
   pendingFieldKeys?: string[];
   hiddenFieldKeys?: string[];
-  readOnlyDisplay?: boolean;
 }) {
   const [trendFieldKey, setTrendFieldKey] = useState<string | null>(null);
   const fields = form.sections.flatMap(section => section.fields).filter(field => !hiddenFieldKeys.includes(field.key));
@@ -129,7 +128,7 @@ export function FormRenderer({
     if (!visibleFields.length) return null;
     return <section key={section.key} className={`form-section ${visibleFields.every(f => f.optional) ? "optional-section" : ""}`}><div className="section-title-block"><h2>{section.title}</h2>{section.description && <p>{section.description}</p>}</div><div className="section-fields">{visibleFields.map(field => {
       const value = field.key in derivedValues ? derivedValues[field.key] : values[field.key];
-      return field.type === "number" || field.type === "computed" ? <NumericField key={field.key} field={field} value={value} history={history[field.key] ?? []} onChange={v => onChange(field.key, v)} onTrend={() => openTrend(field.key)} historyMode={historyMode} disabled={disabled} allowCalculatedEdits={allowCalculatedEdits} pending={pendingFieldKeys.includes(field.key)} readOnlyDisplay={readOnlyDisplay} /> : <GenericField key={field.key} field={field} value={value} history={history} historyMode={historyMode} onChange={v => onChange(field.key, v)} onTrend={() => openTrend(field.key)} disabled={disabled} allowCalculatedEdits={allowCalculatedEdits} />;
+      return field.type === "number" || field.type === "computed" ? <NumericField key={field.key} field={field} value={value} history={history[field.key] ?? []} onChange={v => onChange(field.key, v)} onTrend={() => openTrend(field.key)} historyMode={historyMode} disabled={disabled} allowCalculatedEdits={allowCalculatedEdits} pending={pendingFieldKeys.includes(field.key)} /> : <GenericField key={field.key} field={field} value={value} history={history} historyMode={historyMode} onChange={v => onChange(field.key, v)} onTrend={() => openTrend(field.key)} disabled={disabled} allowCalculatedEdits={allowCalculatedEdits} />;
     })}</div></section>;
   })}</div>{trendField && <TrendModal formKey={form.key} field={trendField} initialPoints={history[trendField.key] ?? []} onClose={() => setTrendFieldKey(null)} />}</>;
 }

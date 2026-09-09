@@ -1,4 +1,13 @@
-export function displayNumber(value:number){return Number.isInteger(value)?String(value):Number(value.toFixed(3)).toString();}
+const DISPLAY_NUMBER_FORMAT = new Intl.NumberFormat("en-US", {
+  useGrouping: true,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+});
+
+export function displayNumber(value: number) {
+  const rounded = Number(value.toFixed(3));
+  return DISPLAY_NUMBER_FORMAT.format(Object.is(rounded, -0) ? 0 : rounded);
+}
 export function historyLabel(point:{plant_date?:string;measured_at?:string}){const date=point.plant_date??point.measured_at?.slice(0,10)??"";const time=point.measured_at?.slice(11,16);return time&&time!=="23:59"?`${date.slice(5)} ${time}`:date.slice(5);}
 export function measurementLabel(point:{plant_date?:string;measured_at?:string},mode:"shift"|"time-slot"|"daily"="daily"){
   const date=point.plant_date??point.measured_at?.slice(0,10)??"";
