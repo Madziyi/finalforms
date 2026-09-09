@@ -478,9 +478,7 @@ export function FormEntryPage() {
         ...e.values,
         [key]: value
       };
-      if (formKey === "boiler-water-control-tests" && (key === "p_alk_burette" || key === "m_alk_burette")) {
-        values.p_alk = typeof values.p_alk_burette === "number" ? values.p_alk_burette * 20 : null;
-        values.m_alk = typeof values.m_alk_burette === "number" ? values.m_alk_burette * 20 : null;
+      if (formKey === "boiler-water-control-tests" && (key === "p_alk" || key === "m_alk")) {
         values.oh_alk = calculateOhAlk(values.p_alk, values.m_alk);
       }
       return {
